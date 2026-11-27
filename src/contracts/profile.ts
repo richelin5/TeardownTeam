@@ -153,6 +153,9 @@ export type ErrorCode =
 
 export type ErrorBody = { error: { code: ErrorCode; message: string } };
 
+/** D&A row label whenever any D&A cell is computed (Depreciation + AmortizationOfIntangibleAssets). */
+export const DA_COMPUTED_LABEL = "D&A (computed: depreciation + amortization of intangibles)";
+
 /** Exact row labels (finance-reviewer ruling, docs/finance/definitions-v1.md). */
 export const ROW_LABELS: Record<Row["id"], string> = {
   revenue: "Revenue",
@@ -161,7 +164,7 @@ export const ROW_LABELS: Record<Row["id"], string> = {
   da: "D&A",
   ebitda: "EBITDA (computed: operating income + D&A)",
   cash: "Cash & cash equivalents",
-  total_debt: "Total debt",
+  total_debt: "Total debt (incl. finance leases)",
   diluted_shares: "Diluted shares (weighted avg.)",
   revenue_growth: "Revenue growth",
   operating_income_growth: "Operating income growth",

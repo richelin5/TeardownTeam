@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
-import { computedDaNote, DA_COMPUTED_LABEL, FL_ADDED_NOTE, makeContext, NO_FL_NOTE, resolveTable } from "../../src/data/resolver";
+import { DA_COMPUTED_LABEL } from "../../src/contracts/profile";
+import { computedDaNote, FL_ADDED_NOTE, makeContext, NO_FL_NOTE, resolveTable } from "../../src/data/resolver";
 import { trimCompanyFacts, type CompanyFacts, type Fact, type Submissions } from "../../src/data/sec";
 
 const AAPL = "0000320193";
@@ -59,7 +60,7 @@ describe("resolver edge cases on real fixtures", () => {
     expect(rowOf(r, "ebitda_growth").cells[3]!.notes ?? []).toHaveLength(0);
   });
 
-  it("a missing tag yields 'not reported' with a filing link; EBITDA follows; growth/margins are n.m. with a reason", () => {
+  it("a missing tag yields 'not reported' with a filing link; EBITDA, its growth and margin are 'not reported' with a reason", () => {
     const r = resolve(MSFT, (f) => drop(f, "AmortizationOfIntangibleAssets"));
     const da = rowOf(r, "da");
     expect(da.label).toBe("D&A");
@@ -67,21 +68,39 @@ describe("resolver edge cases on real fixtures", () => {
     expect(da.cells[4]!.notes).toEqual(["Not tagged in standard XBRL; see filing: https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm"]);
     expect(rowOf(r, "ebitda").cells.every((c) => c.status === "not-reported")).toBe(true);
     const margin = rowOf(r, "ebitda_margin").cells[4]!;
-    expect(margin).toMatchObject({ status: "n.m.", value: null, notes: ["n.m.: needs FY26 (Jun-26) EBITDA (not reported)."] });
+    expect(margin).toMatchObject({ status: "not-reported", value: null, notes: ["Not reported: needs FY26 (Jun-26) EBITDA, which is not reported."] });
     const growth = rowOf(r, "ebitda_growth").cells[4]!;
-    expect(growth).toMatchObject({ status: "n.m.", notes: ["n.m.: needs FY26 (Jun-26) and prior-year EBITDA; it is not reported."] });
-    expect(JSON.stringify(r)).not.toContain("Not reported");
+    expect(growth).toMatchObject({ status: "not-reported", value: null, notes: ["Not reported: needs FY26 (Jun-26) and FY25 (Jun-25) EBITDA, which are not reported."] });
+    // Capitalised only at the start of a "Not reported: needs ..." note (round 2 wording).
+    expect(JSON.stringify(r)).not.toMatch(/Not reported(?!: needs )/);
   });
 
-  it("growth needing a prior year that is missing is n.m. 'needs prior-year revenue'", () => {
+  it("one missing year: growth on both sides is 'not reported', other years still compute", () => {
+    // MSFT FY26 without AmortizationOfIntangibleAssets: FY26 D&A and EBITDA are not reported, FY25 is intact.
+    const r = resolve(MSFT, (f) => {
+      const c = f.facts["us-gaap"]!["AmortizationOfIntangibleAssets"]!;
+      c.units["USD"] = c.units["USD"]!.filter((x) => x.end !== "2026-06-30");
+    });
+    expect(rowOf(r, "ebitda").cells[4]!.status).toBe("not-reported");
+    expect(rowOf(r, "ebitda_growth").cells[4]).toMatchObject({
+      status: "not-reported",
+      value: null,
+      notes: ["Not reported: needs FY26 (Jun-26) EBITDA, which is not reported."],
+    });
+    expect(rowOf(r, "ebitda_growth").cells[3]!.status).toBe("computed");
+    expect(rowOf(r, "operating_margin").cells[4]!.status).toBe("computed");
+  });
+
+  it("growth needing a prior year that is missing is 'not reported: needs prior-year revenue'", () => {
     const r = resolve(KO, (f) => {
       // Keep only facts for the five shown years (FY21-FY25) so FY21 has no prior year.
       for (const c of Object.values(f.facts["us-gaap"]!)) for (const u of Object.keys(c.units)) c.units[u] = c.units[u]!.filter((x) => x.end >= "2021-12-31");
     });
     expect(r.table.years[0]!.label).toBe("FY21 (Dec-21)");
     expect(rowOf(r, "revenue_growth").cells[0]).toMatchObject({
-      status: "n.m.",
-      notes: ["n.m.: needs prior-year revenue (no earlier fiscal year in the 10-K data)."],
+      status: "not-reported",
+      value: null,
+      notes: ["Not reported: needs prior-year revenue (no earlier fiscal year in the 10-K data)."],
     });
   });
 
@@ -211,9 +230,9 @@ describe("total debt incl. finance leases (finance-reviewer findings 2-4)", () =
 
 describe("cash note quantifies excluded short-term investments (finding 5)", () => {
   it.each([
-    [MSFT, 4, "Excludes short-term investments of $55,908M (us-gaap:ShortTermInvestments, 0001193125-26-323660)."],
-    [AAPL, 4, "Excludes current marketable securities of $20,417M (us-gaap:MarketableSecuritiesCurrent, 0000320193-26-000026)."],
-    [KO, 4, "Excludes short-term investments of $3,602M (us-gaap:OtherShortTermInvestments, 0001628280-26-010047)."],
+    [MSFT, 4, "Excludes short-term investments of $55,908M (us-gaap:ShortTermInvestments, 0001193125-26-323660) and any other investment lines on the balance sheet; see filing."],
+    [AAPL, 4, "Excludes current marketable securities of $20,417M (us-gaap:MarketableSecuritiesCurrent, 0000320193-26-000026) and any other investment lines on the balance sheet; see filing."],
+    [KO, 4, "Excludes short-term investments of $3,602M (us-gaap:OtherShortTermInvestments, 0001628280-26-010047) and any other investment lines on the balance sheet; see filing."],
   ])("%s", (cik, i, note) => {
     const c = rowOf(resolve(cik), "cash").cells[i]!;
     expect(c.status).toBe("reported");
