@@ -54,19 +54,32 @@ function numberCell(rowLabel: string, colLabel: string, colIdx: number, metric: 
   return wrap;
 }
 
+/** Text with any https://www.sec.gov/ URL turned into a safe link (text nodes only). */
+function linkify(text: string): Node[] {
+  const out: Node[] = [];
+  let last = 0;
+  for (const m of text.matchAll(/https:\/\/www\.sec\.gov\/[^\s)]*[^\s).,;]/g)) {
+    out.push(document.createTextNode(text.slice(last, m.index)));
+    out.push(link(m[0], m[0]));
+    last = m.index! + m[0].length;
+  }
+  out.push(document.createTextNode(text.slice(last)));
+  return out;
+}
+
 function tooltipContent(note: Note): Node[] {
   const m = note.metric;
-  const out: Node[] = [
-    el("div", { class: "tip-title" }, note.context),
-    el("div", {}, `${formatLong(m)} · ${statusText(m)}`),
-  ];
+  const missing = m.status === "not-reported" || m.status === "n.m.";
+  const out: Node[] = [el("div", { class: "tip-title" }, note.context)];
+  // Missing cells: one line, "status: note (with any SEC link)". Others: value and status.
+  if (missing) out.push(el("div", {}, `${statusText(m)}${m.notes?.length ? ": " : ""}`, ...(m.notes ?? []).flatMap((n, i) => [i ? " " : "", ...linkify(n)])));
+  else out.push(el("div", {}, `${formatLong(m)} · ${statusText(m)}`));
   if (m.formula) out.push(el("div", { class: "tip-formula" }, `Formula: ${m.formula}`));
   const list = el("ul", {});
   const unit = m.unit === "shares" ? "shares" : "USD";
-  const missing = m.status === "not-reported" || m.status === "n.m.";
   for (const s of m.sources) list.append(el("li", {}, missing ? link(s.url, describeSource(s, unit)) : describeSource(s, unit)));
   if (m.sources.length) out.push(list);
-  for (const n of m.notes ?? []) out.push(el("div", { class: "tip-note" }, n));
+  if (!missing) for (const n of m.notes ?? []) out.push(el("div", { class: "tip-note" }, n));
   return out;
 }
 
@@ -92,19 +105,26 @@ const hideTip = () => {
 
 const numOf = (e: Event) => (e.target as HTMLElement).closest<HTMLElement>("[data-note]");
 
+// Touch taps are followed by compatibility mouseover/focus events (often landing on the header); ignore them.
+let lastTouch = -Infinity;
+const afterTouch = () => performance.now() - lastTouch < 700;
+
 document.addEventListener("mouseover", (e) => {
   const t = numOf(e);
+  if (afterTouch()) return;
   if (t) showTip(t);
   else if (!(e.target as HTMLElement).closest("#tip")) hideTip();
 });
 document.addEventListener("focusin", (e) => {
   const t = numOf(e);
+  if (afterTouch() && !t) return;
   if (t) showTip(t);
   else hideTip();
 });
 // Touch: a tap on a number shows its tooltip; a tap anywhere else dismisses it.
 document.addEventListener("pointerup", (e) => {
   if (e.pointerType !== "touch") return;
+  lastTouch = performance.now();
   const t = numOf(e);
   if (t) showTip(t);
   else if (!(e.target as HTMLElement).closest("#tip")) hideTip();
