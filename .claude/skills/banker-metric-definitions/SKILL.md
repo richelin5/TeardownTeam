@@ -22,7 +22,7 @@ These are how a bulge-bracket analyst would define each metric. The finance-revi
 | **FCF** | **Free cash flow (computed)** | CFO − Capex | **computed** |
 | FCF conversion | FCF / Net income | | computed |
 | Margins | x% margin | Metric / Revenue, same period | computed |
-| Total debt | Total debt (incl. finance leases) | ST borrowings + current LTD + LT debt + finance lease liabilities, for every company (added from `FinanceLeaseLiability` unless a debt line already includes them). Excludes operating leases. Draft ruling, pending finance-reviewer re-review (`docs/finance/definitions-v1.md`) | computed |
+| Total debt | Total debt (incl. finance leases) | ST borrowings + current LTD + LT debt + finance lease liabilities, for every company (added from `FinanceLeaseLiability` unless a debt line already includes them). Excludes operating leases. Ruling: `docs/finance/definitions-v1.md` (finance-reviewer approved 2026-11-27) | computed |
 | Cash | Cash & ST investments | Cash & equivalents + ST investments/marketable securities (current) | computed |
 | **Net debt** | **Net debt (computed)** | Total debt − Cash & ST investments | **computed** |
 | Equity value | Equity value | Price × diluted shares | computed (price = user input) |

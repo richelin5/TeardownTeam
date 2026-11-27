@@ -1,6 +1,6 @@
 # v1 metric definitions and labels
 
-**Status: Draft, pending finance-reviewer re-review.** · Drafted by: financial-data-engineer (fix round 1, 2026-11-27), folding in the finance-reviewer's round-1 findings 1–11. Not yet signed off by the finance-reviewer or qa-tester. An earlier version of this file carried a "Reviewer: finance-reviewer" line that the reviewer never gave; that line has been removed.
+**Status: Approved by finance-reviewer on 2026-11-27 (round 3), after the round-1 findings 1–11 and round-2 findings A–C were addressed.** Drafted by financial-data-engineer. This file is the authority for v1 metric definitions and labels; any change to a definition, label, formula, n.m./"not reported" rule or tag chain needs finance-reviewer and qa-tester sign-off.
 Applies to: `src/data/` resolver and every label in the UI.
 Authority: `banker-metric-definitions` skill. Where the user's v1 scope is more specific (exact EBITDA label, "not reported" wording), the user's scope wins.
 
@@ -9,7 +9,7 @@ Authority: `banker-metric-definitions` skill. Where the user's v1 scope is more 
 - Negatives in parentheses. Percentages to 1 decimal. A missing **reported** item shows **"not reported"** (lower case, user wording), with the note "Not tagged in standard XBRL; see filing: <10-K URL>" when the fiscal year's 10-K is known.
 - **Missing data shows "not reported"** (user rule), including on computed ratios. A growth or margin that cannot be computed because data is missing (no earlier fiscal year, or an input that is itself "not reported") is `status: "not-reported"` with a reason note, e.g. "Not reported: needs prior-year revenue (no earlier fiscal year in the 10-K data)." or "Not reported: needs FY26 (Jun-26) EBITDA, which is not reported."
 - **"n.m."** (not meaningful) only when the data exists but the ratio is meaningless, always with a reason note:
-  - growth when the prior value is ≤ 0; margins when revenue ≤ 0;
+  - growth when the prior value is ≤ 0; revenue growth when either year's revenue is ≤ 0 (sanity check); margins when revenue ≤ 0;
   - growth across non-consecutive fiscal years (period ends not 350–380 days apart): "n.m.: non-consecutive fiscal years (FY22 (Dec-22) to FY24 (Dec-24))";
   - financial institutions (SIC 6020–6029, 63xx): EBITDA, EBITDA growth and EBITDA margin are all "n.m.: EBITDA is not meaningful for financial institutions.";
   - a growth or margin whose input is itself n.m.
