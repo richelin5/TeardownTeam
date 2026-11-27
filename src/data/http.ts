@@ -5,7 +5,11 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export type Sleep = (ms: number) => Promise<void>;
 export const realSleep: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Simple FIFO concurrency limiter (SEC: <= 5 concurrent keeps us well under 10 req/s). */
+/**
+ * Simple FIFO concurrency limiter. It caps requests in flight per function instance only (module state is per
+ * instance), so it does NOT enforce SEC's 10 req/s across instances; that relies on the CDN cache and the function's
+ * per-IP rate limit.
+ */
 export function createLimiter(maxConcurrent: number) {
   let active = 0;
   const queue: (() => void)[] = [];
@@ -79,3 +83,11 @@ export class TtlCache {
 }
 
 export const HOUR = 3_600_000;
+
+/**
+ * True for the errors fetch() itself throws on network failure (TypeError: DNS, reset, TLS) or when its
+ * AbortSignal fires (AbortError / TimeoutError). Other errors are bugs and must surface as internal errors.
+ */
+export function isNetworkError(e: unknown): boolean {
+  return e instanceof TypeError || (e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError"));
+}

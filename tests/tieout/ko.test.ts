@@ -21,5 +21,13 @@ describe("KO golden (Dec FYE; Revenues tag; post-FY23 debt tags)", () => {
       revenueAccn: ["0000021344-24-000009", "0000021344-25-000011", "0001628280-26-010047", "0001628280-26-010047", "0001628280-26-010047"],
     });
     expect((row(p, "revenue").cells[4]!.sources[0] as { tag: string }).tag).toBe("Revenues");
+    // Finance-reviewer finding 3: lease note on every KO year; no separate FinanceLeaseLiability is added (none tagged).
+    const KO_LEASE =
+      "The company's debt lines include finance lease obligations (tagged LongTermDebtAndCapitalLeaseObligations from FY24; the FY23 comparative is identical under both tags).";
+    for (const c of row(p, "total_debt").cells) {
+      expect(c.notes).toContain(KO_LEASE);
+      expect(c.sources.some((s) => s.kind === "sec" && s.tag.startsWith("FinanceLease"))).toBe(false);
+    }
+    expect(p.warnings.join(" ")).not.toMatch(/commercial paper exceeds/);
   });
 });

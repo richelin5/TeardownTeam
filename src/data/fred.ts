@@ -2,7 +2,7 @@
 import type { Metric } from "../contracts/profile";
 import { NOT_REPORTED } from "../contracts/profile";
 import { UpstreamError } from "./errors";
-import { fetchWithRetry, HOUR, TtlCache, type FetchLike, type Sleep } from "./http";
+import { fetchWithRetry, HOUR, isNetworkError, TtlCache, type FetchLike, type Sleep } from "./http";
 
 export const FRED_SERIES = ["DGS10", "FEDFUNDS"] as const;
 export type FredSeriesId = (typeof FRED_SERIES)[number];
@@ -48,12 +48,19 @@ export async function fetchRate(id: FredSeriesId, deps: FredDeps): Promise<Metri
   const cacheKey = `fred:${id}`;
   let body = cache.get<Observations>(cacheKey);
   if (!body) {
-    const res = await fetchWithRetry(
-      deps.fetch,
-      fredObservationsUrl(id, deps.apiKey),
-      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) },
-      { sleep: deps.sleep },
-    );
+    let res: Response;
+    try {
+      res = await fetchWithRetry(
+        deps.fetch,
+        fredObservationsUrl(id, deps.apiKey),
+        { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) },
+        { sleep: deps.sleep },
+      );
+    } catch (e) {
+      if (!isNetworkError(e)) throw e;
+      // Thrown fetch or timeout (M1). The original error may carry the URL (with the key), so it is dropped.
+      throw new UpstreamError("fred", 0, "network/timeout");
+    }
     // Never include the URL (it contains the key) in the error.
     if (!res.ok) throw new UpstreamError("fred", res.status);
     try {

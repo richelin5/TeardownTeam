@@ -13,7 +13,8 @@ describe("GET /api/teardown", () => {
     ["MSFT", "0000789019", "0630", "7372"],
     ["KO", "0000021344", "1231", "2080"],
   ])("%s returns contract JSON with CDN cache headers", async (t, cik, fye, sic) => {
-    const { res, body, text } = await call(t.toLowerCase());
+    // Canonical (upper-case) ticker: lower-case input now 308-redirects (handler-round1.test.ts covers that).
+    const { res, body, text } = await call(t);
     expect(res.status).toBe(200);
     const p = body as Profile;
     expect(p.company).toMatchObject({ ticker: t, cik, fiscalYearEnd: fye, sic });

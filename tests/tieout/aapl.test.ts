@@ -16,13 +16,20 @@ describe("AAPL golden (Sep FYE, 53-week FY23)", () => {
         da: [11104, 11519, 11445, 11698, 13423],
         ebitda: [130541, 125820, 134661, 144748, 171486],
         cash: [23646, 29965, 29943, 35934, 36305],
-        total_debt: [120069, 111088, 106629, 98657, 80111],
+        // Incl. finance leases (us-gaap:FinanceLeaseLiability 941 / 1,024 / 896 / 1,230 / 1,456): finance-reviewer finding 2.
+        total_debt: [121010, 112112, 107525, 99887, 81567],
         diluted_shares: [16325.819, 15812.547, 15408.095, 15004.697, 14720.306],
       },
       revenueAccn: ["0000320193-24-000123", "0000320193-25-000079", "0000320193-26-000026", "0000320193-26-000026", "0000320193-26-000026"],
     });
-    // FY26 total debt = LongTermDebt 78,114 (68,208 + 9,906) + CommercialPaper 1,997
-    expect(row(p, "total_debt").cells[4]!.formula).toBe("LongTermDebt + CommercialPaper");
+    // FY26 total debt = LongTermDebt 78,114 (68,208 + 9,906) + CommercialPaper 1,997 + FinanceLeaseLiability 1,456
+    const td = row(p, "total_debt").cells[4]!;
+    expect(td.formula).toBe("LongTermDebt + CommercialPaper + FinanceLeaseLiability");
+    expect(td.notes).toContain("Includes finance lease liabilities reported outside the debt lines (us-gaap:FinanceLeaseLiability).");
+    expect(row(p, "cash").cells[4]!.notes?.join(" ")).toMatch(/Excludes current marketable securities of \$20,417M \(us-gaap:MarketableSecuritiesCurrent/);
+    // 53-week FY23 touches FY23 and FY24 growth cells only.
+    const g = row(p, "revenue_growth").cells;
+    expect(g.map((c) => (c.notes ?? []).includes("Not like-for-like: FY23 (Sep-23) is a 53-week year"))).toEqual([false, true, true, false, false]);
     expect(p.table.years[1]!.weeks53).toBe(true);
     expect(row(p, "revenue_growth").cells[4]!.value).toBeCloseTo(478834 / 416161 - 1, 10);
   });

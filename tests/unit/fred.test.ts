@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { createFixtureFetch } from "../../src/data/fixtureFetch";
 import { fetchMacro, fetchRate, latestObservation } from "../../src/data/fred";
+import { UpstreamError } from "../../src/data/errors";
 
 const KEY = "abcdef0123456789abcdef0123456789";
 
@@ -37,5 +38,21 @@ describe("FRED", () => {
     expect(macro.dgs10.status).toBe("reported");
     expect(macro.fedfunds).toMatchObject({ status: "not-reported", value: null });
     expect(JSON.stringify(macro) + logs.join()).not.toContain(KEY);
+  });
+  it("a thrown fetch or timeout becomes UpstreamError('fred', 0) without the key, and degrades only that series (M1)", async () => {
+    const err = await fetchRate("DGS10", { fetch: async () => { throw new TypeError(`fetch failed for ...api_key=${KEY}`); }, apiKey: KEY }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UpstreamError);
+    expect(err).toMatchObject({ service: "fred", status: 0, message: "network/timeout" });
+    expect(String((err as Error).message)).not.toContain(KEY);
+    const logs: string[] = [];
+    const base = createFixtureFetch();
+    const macro = await fetchMacro(
+      { fetch: async (u, i) => { if (u.includes("FEDFUNDS")) throw new DOMException("timeout", "TimeoutError"); return base(u, i); }, apiKey: KEY },
+      (m) => logs.push(m),
+    );
+    expect(macro.dgs10.status).toBe("reported");
+    expect(macro.fedfunds.status).toBe("not-reported");
+    expect(logs.join()).toContain("status 0");
+    expect(logs.join()).not.toContain(KEY);
   });
 });
