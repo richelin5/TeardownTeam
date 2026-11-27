@@ -1,0 +1,77 @@
+{
+ "_fixture_note": "Shaped like FRED API series/observations (file_type=json, sort_order=desc). Values are real, from https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS retrieved 2026-11-27; blank CSV cells (market holidays) are encoded as '.', exactly as the API does. Series: Federal Funds Effective Rate (monthly average, percent).",
+ "realtime_start": "2026-11-27",
+ "realtime_end": "2026-11-27",
+ "observation_start": "2026-01-01",
+ "observation_end": "9999-12-31",
+ "units": "lin",
+ "output_type": 1,
+ "file_type": "json",
+ "order_by": "observation_date",
+ "sort_order": "desc",
+ "count": 10,
+ "offset": 0,
+ "limit": 10,
+ "observations": [
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-10-01",
+   "value": "3.88"
+  },
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-09-01",
+   "value": "3.75"
+  },
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-08-01",
+   "value": "3.63"
+  },
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-07-01",
+   "value": "3.63"
+  },
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-06-01",
+   "value": "3.63"
+  },
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-05-01",
+   "value": "3.63"
+  },
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-04-01",
+   "value": "3.64"
+  },
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-03-01",
+   "value": "3.64"
+  },
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-02-01",
+   "value": "3.64"
+  },
+  {
+   "realtime_start": "2026-11-27",
+   "realtime_end": "2026-11-27",
+   "date": "2026-01-01",
+   "value": "3.64"
+  }
+ ]
+}
