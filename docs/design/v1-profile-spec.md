@@ -54,3 +54,12 @@ Hide the search, the tooltips and the fixture banner's controls. Keep the table,
 
 ## Visual
 System sans-serif stack, 14 px base (table 13 px), navy accent `#1f3a5f`, rules `#d0d5dd`, muted text `#5b6472` (contrast ≥ 4.5:1 on white). No dark mode in v1 (backlog).
+
+## Round 2 additions (2026-11-27, ux-designer review)
+- **Print endnotes:** one page. Footnotes are lettered ([A], [B], ...) and grouped by filing, not one per cell. Each number prints a small letter marker; each endnote lists the filing (form, filed, accn, URL) and which rows and years it supports. FRED series get their own letters. Footer is part of the page and must not spill. Page-count check: `pdfinfo` must report 1 page for AAPL, MSFT and KO, including the MSFT computed-D&A warning.
+- **Touch:** tap a number to show its tooltip; tap elsewhere to dismiss. Do not let emulated mouse events (mouseover) that follow a touch hide the tooltip: ignore mouseover for about 500 ms after a touch pointerup.
+- **Keyboard:** Tab reaches every number. Focus shows the tooltip. Enter opens Sources & notes and jumps to that number's entry (highlighted via :target). Space toggles the tooltip. Escape hides it.
+- **Missing values:** "not reported" (reported items) or "n.m." (computed items whose input is missing), muted italic, no footnote number. The tooltip gives one reason line, not the status twice, plus a link to the filing.
+- **Labels:** "Total debt (incl. finance leases)"; when a company has no us-gaap D&A total, "D&A (computed: depreciation + amortization of intangibles)" with a page warning above the table.
+- **Fiscal year end:** "Dec 31" for calendar-year filers; "Sep (latest FY ended 2026-09-26)" for 52/53-week filers. Fed funds: "(effective, monthly avg.) 3.88% Oct-2026 average".
+- **Phone:** the table caption sits outside the scroller. Chart text is at least 11 px rendered.
