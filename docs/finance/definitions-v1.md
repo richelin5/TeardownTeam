@@ -7,11 +7,12 @@ Authority: `banker-metric-definitions` skill. Where the user's v1 scope is more 
 ## Units and display
 - Banner: "$ in millions, except per-share data; shares in millions". Values are stored in full units and rounded only for display.
 - Negatives in parentheses. Percentages to 1 decimal. A missing **reported** item shows **"not reported"** (lower case, user wording), with the note "Not tagged in standard XBRL; see filing: <10-K URL>" when the fiscal year's 10-K is known.
-- **"n.m."** (not meaningful) for every computed ratio that cannot be computed, always with a reason note:
+- **Missing data shows "not reported"** (user rule), including on computed ratios. A growth or margin that cannot be computed because data is missing (no earlier fiscal year, or an input that is itself "not reported") is `status: "not-reported"` with a reason note, e.g. "Not reported: needs prior-year revenue (no earlier fiscal year in the 10-K data)." or "Not reported: needs FY26 (Jun-26) EBITDA, which is not reported."
+- **"n.m."** (not meaningful) only when the data exists but the ratio is meaningless, always with a reason note:
   - growth when the prior value is ≤ 0; margins when revenue ≤ 0;
-  - growth or margin whose base is missing, e.g. "n.m.: needs prior-year revenue (no earlier fiscal year in the 10-K data)", "n.m.: needs FY26 (Jun-26) EBITDA (not reported)". "not reported" is reserved for reported base items;
   - growth across non-consecutive fiscal years (period ends not 350–380 days apart): "n.m.: non-consecutive fiscal years (FY22 (Dec-22) to FY24 (Dec-24))";
-  - financial institutions (SIC 6020–6029, 63xx): EBITDA, EBITDA growth and EBITDA margin are all "n.m.: EBITDA is not meaningful for financial institutions."
+  - financial institutions (SIC 6020–6029, 63xx): EBITDA, EBITDA growth and EBITDA margin are all "n.m.: EBITDA is not meaningful for financial institutions.";
+  - a growth or margin whose input is itself n.m.
 
 ## Fiscal-year labels
 - A fiscal year is identified by its **period end date** (duration 350–380 days), never by the XBRL `fy`/`fp` fields.
@@ -26,7 +27,7 @@ Authority: `banker-metric-definitions` skill. Where the user's v1 scope is more 
 | Net income | Net income attributable to the parent | `NetIncomeLoss` → `NetIncomeLossAvailableToCommonStockholdersBasic` (note "After preferred dividends; not net income attributable to the parent.") → `ProfitLoss` (note "Includes net income attributable to noncontrolling interests.") | reported |
 | D&A, or **D&A (computed: depreciation + amortization of intangibles)** when any year is computed | Depreciation, depletion & amortization from the cash-flow statement | `DepreciationDepletionAndAmortization` → `DepreciationAndAmortization` → `DepreciationAmortizationAndAccretionNet` → computed `Depreciation + AmortizationOfIntangibleAssets` (rank 3) | reported (or computed, see MSFT) |
 | **EBITDA (computed: operating income + D&A)** | Operating income + D&A, unadjusted (no SBC, restructuring or impairment add-backs) | inputs above | computed, always |
-| Cash & cash equivalents | Cash and cash equivalents on the balance sheet at FY end. Excludes short-term investments; the note quantifies them, e.g. "Excludes short-term investments of $55,908M (us-gaap:ShortTermInvestments, <accn>)." | `CashAndCashEquivalentsAtCarryingValue` → `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` (note "Includes restricted cash."). Note only: first of `ShortTermInvestments` → `MarketableSecuritiesCurrent` (AAPL) → `AvailableForSaleSecuritiesDebtSecuritiesCurrent` → `OtherShortTermInvestments` (KO) | reported |
+| Cash & cash equivalents | Cash and cash equivalents on the balance sheet at FY end. Excludes short-term investments; the note quantifies the first matching tag and says other lines are excluded too, e.g. "Excludes short-term investments of $55,908M (us-gaap:ShortTermInvestments, <accn>) and any other investment lines on the balance sheet; see filing." No match: "No short-term investments or current marketable securities tagged at this date; any shown on the balance sheet are excluded." | `CashAndCashEquivalentsAtCarryingValue` → `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` (note "Includes restricted cash."). Note only: first of `ShortTermInvestments` → `MarketableSecuritiesCurrent` (AAPL) → `AvailableForSaleSecuritiesDebtSecuritiesCurrent` → `OtherShortTermInvestments` (KO) | reported |
 | **Total debt (incl. finance leases)** | Borrowings (short-term borrowings + current portion of long-term debt + long-term debt) **+ finance lease liabilities**, at FY end, for every company. **Excludes operating leases.** | See "Ruling: total debt" | computed when > 1 input, reported when a single fact |
 | Diluted shares (weighted avg.) | Weighted-average diluted shares for the fiscal year (the EPS denominator), not period-end shares outstanding | `WeightedAverageNumberOfDilutedSharesOutstanding` → `WeightedAverageNumberOfShareOutstandingBasicAndDiluted` | reported |
 | Revenue growth / Operating income growth / EBITDA growth / Net income growth | (Value_FY / Value_FY−1) − 1 for the same metric, consecutive fiscal years only | inputs above | computed |
@@ -72,7 +73,7 @@ Microsoft's cash-flow line "Depreciation, amortization, and other" is the compan
 **Rationale (corrected).** The computed figure is conceptually D&A and every input is a sourced us-gaap fact, so it is better than "not reported" as long as it is labeled honestly. It does **not** tie to the cash-flow line, and the gap goes both ways: computed minus CF line = **+466** (FY26: 39,000 vs 38,534), **−1,433** (FY25: 28,000 vs 29,433), **−958** (FY24: 20,000 vs 20,958), i.e. about 5% low in FY24–FY25 and 1% high in FY26. The previous draft cited only the FY26 +466 gap; that understated the issue. QA reports these rows as "PASS vs cited inputs; does NOT tie to CF line (…), disclosed on page", never "EXPLAINED". The fallback applies only when **both** inputs exist for the same fiscal year, and never when a us-gaap D&A total exists (AAPL and KO always use `DepreciationDepletionAndAmortization`).
 
 ## Sanity checks (fail closed → "not reported"/"n.m." plus a note or warning, never a silent wrong number)
-- Revenue ≤ 0 for a non-financial company → revenue not reported, margins n.m.
+- Revenue ≤ 0 for a non-financial company → revenue not reported (warning); its margins and revenue growth are n.m. ("revenue is zero or negative"), because the data exists but the ratio is meaningless.
 - |margin| > 100% → flagged in warnings (not suppressed).
 - Debt double count: never add both `LongTermDebt` and its components; never add `CommercialPaper` when `NotesAndLoansPayable`/`ShortTermBorrowings` was used; never add `FinanceLeaseLiability` when a debt line already includes finance leases.
 - Commercial paper > the chosen short-term borrowings line → note + warning (finding 4).
@@ -80,7 +81,6 @@ Microsoft's cash-flow line "Depreciation, amortization, and other" is the compan
 ## Out of scope in v1 (must not appear)
 "Adjusted EBITDA", EV, multiples, net debt, LTM.
 
-## Open for the finance-reviewer
-- KO's cash note quantifies only the first matching investments tag (`OtherShortTermInvestments`, 3,602). KO's current "Marketable securities" (1,934, us-gaap `MarketableSecurities`, which is not current-specific) is also excluded but not quantified.
-- EBITDA with a missing input stays "not reported" (with "needs … D&A" note) rather than n.m.; confirm.
-- Finding 10 was not in the data-layer brief and is not addressed here.
+## Resolved reviewer questions (finance-reviewer, round 2)
+- (a) us-gaap `MarketableSecurities` is **not** quantified in the cash note, because it is not current-specific (it can include non-current holdings). The note instead says the cash row also excludes "any other investment lines on the balance sheet; see filing". Example: KO's current "Marketable securities" (1,934) is covered by that wording; only `OtherShortTermInvestments` (3,602) is quantified.
+- (b) EBITDA with a missing input (operating income or D&A not reported) stays **"not reported"**, with the note "EBITDA needs both operating income and D&A; D&A is not reported." Its growth and margin follow the rule above ("Not reported: needs … EBITDA, which is not reported.").

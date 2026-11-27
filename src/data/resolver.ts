@@ -3,6 +3,7 @@
  * No network. Rules: xbrl-mapping skill + docs/finance/definitions-v1.md.
  */
 import {
+  DA_COMPUTED_LABEL,
   NOT_REPORTED,
   ROW_LABELS,
   type FinancialTable,
@@ -18,14 +19,6 @@ import { CHAINS, TAG_NOTES } from "./tagChains";
 
 export const YEARS_SHOWN = 5;
 const RESTATEMENT_THRESHOLD = 0.005;
-
-/**
- * Row labels emitted by the data layer. They extend the contract's ROW_LABELS where a finance-reviewer ruling
- * changed the wording (round 1): total debt now always includes finance leases, and the D&A row says "computed"
- * whenever any D&A cell is computed.
- */
-export const LABELS: Record<Row["id"], string> = { ...ROW_LABELS, total_debt: "Total debt (incl. finance leases)" };
-export const DA_COMPUTED_LABEL = "D&A (computed: depreciation + amortization of intangibles)";
 
 type Picked = { tag: string; rank: number; fact: Fact; notes: string[] };
 
@@ -133,6 +126,9 @@ const nm = (id: string, label: string, notes: string[], sources: Metric["sources
 });
 
 export const NOT_TAGGED = "Not tagged in standard XBRL; see filing";
+/** Sentence-initial form of NOT_REPORTED, for notes on ratios with a missing input. */
+const NOT_REPORTED_PREFIX = "Not reported";
+const secOnly = (xs: Metric["sources"]): SecSource[] => xs.filter((x): x is SecSource => x.kind === "sec");
 
 /** "Not tagged in standard XBRL; see filing: <10-K URL>" (the 10-K for that fiscal year end, when known). */
 export function notTaggedNote(ctx: ResolveContext, year: FiscalYear): string {
@@ -147,7 +143,7 @@ function reportedMetric(ctx: ResolveContext, id: string, label: string, unit: Me
 
 function simpleMetric(ctx: ResolveContext, id: Row["id"], chain: readonly string[], unit: "USD" | "shares", year: FiscalYear, instant: boolean): Metric {
   const p = pickChain(ctx, chain, unit, year, instant);
-  return p ? reportedMetric(ctx, id, LABELS[id], unit === "USD" ? "USD" : "shares", p) : notReported(id, LABELS[id], unit, notTaggedNote(ctx, year));
+  return p ? reportedMetric(ctx, id, ROW_LABELS[id], unit === "USD" ? "USD" : "shares", p) : notReported(id, ROW_LABELS[id], unit, notTaggedNote(ctx, year));
 }
 
 const fmtM = (v: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(v / 1e6);
@@ -171,7 +167,7 @@ export function computedDaNote(cik10: string, rounded: boolean): string {
 
 function daMetric(ctx: ResolveContext, year: FiscalYear): Metric {
   const total = pickChain(ctx, CHAINS.da, "USD", year, false);
-  if (total) return reportedMetric(ctx, "da", LABELS.da, "USD", total);
+  if (total) return reportedMetric(ctx, "da", ROW_LABELS.da, "USD", total);
   const dep = pickChain(ctx, ["Depreciation"], "USD", year, false);
   const amort = pickChain(ctx, ["AmortizationOfIntangibleAssets"], "USD", year, false);
   if (dep && amort) {
@@ -188,7 +184,7 @@ function daMetric(ctx: ResolveContext, year: FiscalYear): Metric {
       notes: dedupe([computedDaNote(ctx.cik10, rounded), ...dep.notes, ...amort.notes]),
     };
   }
-  return notReported("da", LABELS.da, "USD", notTaggedNote(ctx, year));
+  return notReported("da", ROW_LABELS.da, "USD", notTaggedNote(ctx, year));
 }
 
 // ---------------------------------------------------------------- total debt
@@ -207,7 +203,7 @@ type DebtResult = {
 };
 
 function totalDebtMetric(ctx: ResolveContext, year: FiscalYear): DebtResult {
-  const label = LABELS.total_debt;
+  const label = ROW_LABELS.total_debt;
   const parts: Picked[] = [];
   const notes: string[] = [];
   const warnings: string[] = [];
@@ -334,7 +330,7 @@ function cashMetric(ctx: ResolveContext, year: FiscalYear): Metric {
   if (m.value === null) return m;
   const inv = pickChain(ctx, CHAINS.st_investments, "USD", year, true);
   const note = inv
-    ? `Excludes ${INVESTMENT_LABEL[inv.tag] ?? "short-term investments"} of $${fmtM(inv.fact.val)}M (us-gaap:${inv.tag}, ${inv.fact.accn}).`
+    ? `Excludes ${INVESTMENT_LABEL[inv.tag] ?? "short-term investments"} of $${fmtM(inv.fact.val)}M (us-gaap:${inv.tag}, ${inv.fact.accn}) and any other investment lines on the balance sheet; see filing.`
     : "No short-term investments or current marketable securities tagged at this date; any shown on the balance sheet are excluded.";
   return { ...m, notes: [...(m.notes ?? []), note] };
 }
@@ -344,7 +340,7 @@ function cashMetric(ctx: ResolveContext, year: FiscalYear): Metric {
 const FIN_NM = "n.m.: EBITDA is not meaningful for financial institutions.";
 
 function ebitdaMetric(op: Metric, da: Metric): Metric {
-  const label = LABELS.ebitda;
+  const label = ROW_LABELS.ebitda;
   const sources = [...op.sources, ...da.sources].filter((s): s is SecSource => s.kind === "sec");
   if (op.value === null || da.value === null) {
     return notReported("ebitda", label, "USD", `EBITDA needs both operating income and D&A; ${op.value === null ? "operating income" : "D&A"} is ${NOT_REPORTED}.`, sources);
@@ -384,17 +380,21 @@ type GrowthInput = {
 
 function growthMetric(g: GrowthInput): Metric {
   const { id, noun, base, cur, prior, curYear, priorYear } = g;
-  const label = LABELS[id];
-  if (!prior || !priorYear) return nm(id, label, [`n.m.: needs prior-year ${noun} (no earlier fiscal year in the 10-K data).`]);
+  const label = ROW_LABELS[id];
+  if (!prior || !priorYear) {
+    return notReported(id, label, "ratio", `${NOT_REPORTED_PREFIX}: needs prior-year ${noun} (no earlier fiscal year in the 10-K data).`);
+  }
   const sources = [...cur.sources, ...prior.sources];
   const formula = `${base} ${curYear.label} / ${base} ${priorYear.label} − 1`;
   if (!consecutive(priorYear, curYear)) {
     return nm(id, label, [`n.m.: non-consecutive fiscal years (${priorYear.label} to ${curYear.label}).`], sources, formula);
   }
   if (cur.value === null || prior.value === null) {
-    const missing = cur.value === null && prior.value === null ? `${curYear.label} and prior-year ${noun}` : cur.value === null ? `${curYear.label} ${noun}` : `prior-year ${noun}`;
-    const why = [cur, prior].some((m) => m.status === "n.m.") ? "it is n.m." : `it is ${NOT_REPORTED}`;
-    return nm(id, label, [`n.m.: needs ${missing}; ${why}.`], sources);
+    const missing = [cur.value === null ? curYear : null, prior.value === null ? priorYear : null].filter((y): y is FiscalYear => y !== null);
+    const what = `${missing.map((y) => y.label).join(" and ")} ${noun}`;
+    // An input that is itself n.m. keeps n.m.; a missing (not-reported) input makes the ratio "not reported".
+    if ([cur, prior].some((m) => m.status === "n.m.")) return nm(id, label, [`n.m.: needs ${what}, which is n.m.`], sources);
+    return notReported(id, label, "ratio", `${NOT_REPORTED_PREFIX}: needs ${what}, which ${missing.length > 1 ? "are" : "is"} ${NOT_REPORTED}.`, secOnly(sources));
   }
   if (prior.value <= 0) return nm(id, label, ["n.m.: prior-year value is zero or negative."], sources, formula);
   const notes = dedupe([...weeks53Notes(priorYear, curYear), ...(g.extraNotes ?? [])]);
@@ -402,12 +402,13 @@ function growthMetric(g: GrowthInput): Metric {
 }
 
 function marginMetric(id: Row["id"], noun: string, base: string, num: Metric, rev: Metric, year: FiscalYear): Metric {
-  const label = LABELS[id];
+  const label = ROW_LABELS[id];
   const sources = [...num.sources, ...rev.sources];
   if (num.value === null || rev.value === null) {
-    const missing = num.value === null && rev.value === null ? `${noun} and revenue` : num.value === null ? noun : "revenue";
-    const why = [num, rev].some((m) => m.status === "n.m.") ? "n.m." : NOT_REPORTED;
-    return nm(id, label, [`n.m.: needs ${year.label} ${missing} (${why}).`], sources);
+    const both = num.value === null && rev.value === null;
+    const what = `${year.label} ${both ? `${noun} and revenue` : num.value === null ? noun : "revenue"}`;
+    if ([num, rev].some((m) => m.status === "n.m.")) return nm(id, label, [`n.m.: needs ${what}, which is n.m.`], sources);
+    return notReported(id, label, "ratio", `${NOT_REPORTED_PREFIX}: needs ${what}, which ${both ? "are" : "is"} ${NOT_REPORTED}.`, secOnly(sources));
   }
   const formula = `${base} / Revenue (${year.label})`;
   if (rev.value <= 0) return nm(id, label, ["n.m.: revenue is zero or negative."], sources, formula);
@@ -486,11 +487,14 @@ export function resolveTable(ctx: ResolveContext, sic: string): ResolveResult {
     }
   }
 
-  // Sanity checks (fail closed for revenue <= 0 in non-financials).
+  // Sanity checks (fail closed for revenue <= 0 in non-financials). The value is withheld ("not reported"), but
+  // ratios on it stay n.m. ("revenue is zero or negative"): the data exists, the ratio is meaningless.
+  const revenueNonPositive = new Set<number>();
   per.forEach((p, i) => {
     if (!isFinancial && p.revenue.value !== null && p.revenue.value <= 0) {
+      revenueNonPositive.add(i);
       warnings.push(`Revenue for ${allYears[i]!.label} is zero or negative; it is shown as not reported.`);
-      p.revenue = notReported("revenue", LABELS.revenue, "USD", "Failed sanity check (revenue ≤ 0).");
+      p.revenue = notReported("revenue", ROW_LABELS.revenue, "USD", "Failed sanity check (revenue ≤ 0).");
     }
   });
 
@@ -517,7 +521,7 @@ export function resolveTable(ctx: ResolveContext, sic: string): ResolveResult {
 
   const valueRow = (id: keyof (typeof per)[number], unit: MetricUnit): Row => ({
     id,
-    label: LABELS[id],
+    label: ROW_LABELS[id],
     kind: "value",
     unit,
     cells: per.slice(offset).map((p) => p[id]),
@@ -525,12 +529,16 @@ export function resolveTable(ctx: ResolveContext, sic: string): ResolveResult {
   const NOUN = { revenue: ["revenue", "Revenue"], operating_income: ["operating income", "Operating income"], ebitda: ["EBITDA", "EBITDA"], net_income: ["net income", "Net income"] } as const;
   const growthRow = (id: Row["id"], key: keyof typeof NOUN): Row => ({
     id,
-    label: LABELS[id],
+    label: ROW_LABELS[id],
     kind: "growth",
     unit: "ratio",
     cells: shown.map((y, j) => {
       const i = j + offset;
-      if (isFinancial && key === "ebitda") return nm(id, LABELS[id], [FIN_NM]);
+      if (isFinancial && key === "ebitda") return nm(id, ROW_LABELS[id], [FIN_NM]);
+      if (key === "revenue" && i > 0 && (revenueNonPositive.has(i) || revenueNonPositive.has(i - 1))) {
+        const bad = revenueNonPositive.has(i) ? y : allYears[i - 1]!;
+        return nm(id, ROW_LABELS[id], [`n.m.: revenue is zero or negative in ${bad.label}.`]);
+      }
       return growthMetric({
         id,
         noun: NOUN[key][0],
@@ -545,11 +553,15 @@ export function resolveTable(ctx: ResolveContext, sic: string): ResolveResult {
   });
   const marginRow = (id: Row["id"], key: "operating_income" | "ebitda" | "net_income"): Row => ({
     id,
-    label: LABELS[id],
+    label: ROW_LABELS[id],
     kind: "margin",
     unit: "ratio",
     cells: shown.map((y, j) =>
-      isFinancial && key === "ebitda" ? nm(id, LABELS[id], [FIN_NM]) : marginMetric(id, NOUN[key][0], NOUN[key][1], per[j + offset]![key], per[j + offset]!.revenue, y),
+      isFinancial && key === "ebitda"
+        ? nm(id, ROW_LABELS[id], [FIN_NM])
+        : revenueNonPositive.has(j + offset)
+          ? nm(id, ROW_LABELS[id], ["n.m.: revenue is zero or negative."])
+          : marginMetric(id, NOUN[key][0], NOUN[key][1], per[j + offset]![key], per[j + offset]!.revenue, y),
     ),
   });
 

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NOT_REPORTED, ROW_LABELS, type Metric, type Profile } from "../../src/contracts/profile";
-import { DA_COMPUTED_LABEL, LABELS } from "../../src/data/resolver";
+import { DA_COMPUTED_LABEL, NOT_REPORTED, ROW_LABELS, type Metric, type Profile } from "../../src/contracts/profile";
 import { profile, row } from "../helpers";
 
 const TICKERS = ["AAPL", "MSFT", "KO"] as const;
@@ -29,10 +28,9 @@ describe.each(TICKERS)("%s profile contract", (t) => {
     expect(row(p, "ebitda").label).toBe("EBITDA (computed: operating income + D&A)");
     expect(row(p, "total_debt").label).toBe("Total debt (incl. finance leases)");
     for (const r of p.table.rows) {
-      // Data-layer labels = contract ROW_LABELS plus the round-1 finance-reviewer rulings (total debt, computed D&A).
+      // One source of truth: the contract's ROW_LABELS, or DA_COMPUTED_LABEL when any D&A cell is computed.
       const computedDa = r.id === "da" && r.cells.some((c) => c.status === "computed");
-      expect(r.label).toBe(computedDa ? DA_COMPUTED_LABEL : LABELS[r.id]);
-      if (r.id !== "total_debt") expect(LABELS[r.id]).toBe(ROW_LABELS[r.id]);
+      expect(r.label).toBe(computedDa ? DA_COMPUTED_LABEL : ROW_LABELS[r.id]);
       expect(r.cells).toHaveLength(5);
     }
     const ends = p.table.years.map((y) => y.end);
@@ -42,7 +40,7 @@ describe.each(TICKERS)("%s profile contract", (t) => {
   it("data-side strings use lower-case 'not reported' and every not-reported cell says where to look", async () => {
     const p = await profile(t);
     const text = JSON.stringify(p);
-    expect(text).not.toContain("Not reported");
+    expect(text).not.toMatch(/Not reported(?!: needs )/);
     for (const m of allMetrics(p)) if (m.status === "not-reported") expect(m.notes?.length).toBeGreaterThan(0);
   });
   it("EBITDA = operating income + D&A, growth and margins recompute from cells", async () => {
