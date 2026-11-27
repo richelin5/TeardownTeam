@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Company Teardown</title>
+    <meta name="description" content="Five fiscal years of core financials from SEC EDGAR, with a source on every number." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <a class="skip" href="#app">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/">Company Teardown</a>
+      <form id="search" class="search" role="search" action="/" method="get">
+        <label for="ticker" class="visually-hidden">Ticker</label>
+        <input id="ticker" name="ticker" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="10" placeholder="Ticker, e.g. AAPL" required />
+        <button type="submit">Look up</button>
+      </form>
+      <nav><a href="/resources.html">Resources</a></nav>
+    </header>
+    <p id="status" class="visually-hidden" aria-live="polite"></p>
+    <main id="app"></main>
+    <div id="tip" role="tooltip" hidden></div>
+    <footer class="site-footer">
+      <a href="/resources.html">Resources</a>
+      <span>Data: SEC EDGAR and FRED, Federal Reserve Bank of St. Louis</span>
+      <span>No AI is used · Not investment advice</span>
+    </footer>
+    <script type="module" src="/src/ui/main.ts"></script>
+  </body>
+</html>

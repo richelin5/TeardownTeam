@@ -17,3 +17,6 @@ This file loads into my prompt at startup (first 200 lines / 25 KB). I keep it s
 
 ## Learned
 <!-- Append dated bullets: - YYYY-MM-DD: <lesson> (why it matters). Remove entries that are no longer true. -->
+- 2026-11-27: A session without the Agent tool can't spawn the team. Do the work in wave order, but never record reviewer "APPROVED" verdicts you authored yourself: log self-checks in STATUS.md and leave the gates pending (separation of duties).
+- 2026-11-27: KO short-term debt = NotesAndLoansPayable, which already contains CommercialPaper, so the ST-borrowings chain is first-match only (docs/finance/definitions-v1.md).
+- 2026-11-27: tests/tieout/build-evidence.mjs parses fixtures/filings/*.md by row label; run its negative control (a wrong label must FAIL).

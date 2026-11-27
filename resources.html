@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Resources | Company Teardown</title>
+    <meta name="description" content="Every external link Company Teardown relies on: SEC EDGAR, FRED, Netlify and library docs, the repository and the deploy guide." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/">Company Teardown</a>
+      <nav><a href="/" >Search</a> <a href="/resources.html" aria-current="page">Resources</a></nav>
+    </header>
+    <main id="main" class="resources">
+      <h1>Resources</h1>
+      <p>Every external link this project relies on. All data comes from the SEC and FRED, called server-side by a Netlify Function. No AI is used.</p>
+
+      <section>
+        <h2>Project</h2>
+        <ul>
+          <li><a href="https://github.com/richelin5/TeardownTeam" rel="noopener noreferrer">GitHub repository: richelin5/TeardownTeam</a></li>
+          <li><a href="https://github.com/richelin5/TeardownTeam#deploy-to-netlify-step-by-step" rel="noopener noreferrer">Deploy to Netlify (step by step)</a>: the README section with the full guide</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>SEC EDGAR</h2>
+        <ul>
+          <li><a href="https://www.sec.gov/search-filings/edgar-application-programming-interfaces" rel="noopener noreferrer">EDGAR application programming interfaces</a>: submissions and XBRL companyfacts APIs</li>
+          <li><a href="https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data" rel="noopener noreferrer">Accessing EDGAR data</a>: fair access, the 10 requests/second limit and the required User-Agent</li>
+          <li><a href="https://www.sec.gov/about/webmaster-frequently-asked-questions#developers" rel="noopener noreferrer">SEC webmaster FAQ for developers</a></li>
+          <li><a href="https://www.sec.gov/about/developer-resources" rel="noopener noreferrer">SEC developer resources</a></li>
+          <li><a href="https://www.sec.gov/files/company_tickers.json" rel="noopener noreferrer">Ticker → CIK map (company_tickers.json)</a></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>FRED (Federal Reserve Bank of St. Louis)</h2>
+        <ul>
+          <li><a href="https://fred.stlouisfed.org/docs/api/fred/series_observations.html" rel="noopener noreferrer">FRED API: series/observations</a></li>
+          <li><a href="https://fred.stlouisfed.org/docs/api/api_key.html" rel="noopener noreferrer">FRED API keys</a></li>
+          <li><a href="https://fred.stlouisfed.org/docs/api/fred/errors.html" rel="noopener noreferrer">FRED API errors</a></li>
+          <li><a href="https://fred.stlouisfed.org/legal/#api" rel="noopener noreferrer">FRED terms of use</a></li>
+          <li><a href="https://fred.stlouisfed.org/series/DGS10" rel="noopener noreferrer">Series DGS10: 10-Year Treasury constant maturity yield</a></li>
+          <li><a href="https://fred.stlouisfed.org/series/FEDFUNDS" rel="noopener noreferrer">Series FEDFUNDS: effective federal funds rate (monthly)</a></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Netlify</h2>
+        <ul>
+          <li><a href="https://docs.netlify.com/build/functions/get-started/" rel="noopener noreferrer">Functions: get started</a></li>
+          <li><a href="https://docs.netlify.com/build/functions/configuration/" rel="noopener noreferrer">Functions: configuration (paths, bundling)</a></li>
+          <li><a href="https://docs.netlify.com/build/caching/caching-overview/" rel="noopener noreferrer">Caching overview (Netlify-CDN-Cache-Control, durable, stale-while-revalidate)</a></li>
+          <li><a href="https://docs.netlify.com/build/data-and-storage/netlify-blobs/" rel="noopener noreferrer">Netlify Blobs</a> (optional cache layer, not used in v1)</li>
+          <li><a href="https://docs.netlify.com/build/configure-builds/file-based-configuration/" rel="noopener noreferrer">netlify.toml file-based configuration</a></li>
+          <li><a href="https://docs.netlify.com/build/environment-variables/overview/" rel="noopener noreferrer">Environment variables</a></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Libraries and tools used</h2>
+        <ul>
+          <li><a href="https://www.typescriptlang.org/docs/" rel="noopener noreferrer">TypeScript</a>: language and type checker</li>
+          <li><a href="https://vite.dev/guide/" rel="noopener noreferrer">Vite</a>: build and dev server</li>
+          <li><a href="https://vitest.dev/guide/" rel="noopener noreferrer">Vitest</a>: unit and golden tests</li>
+          <li><a href="https://nodejs.org/api/" rel="noopener noreferrer">Node.js API</a>: function runtime (fetch, fs for fixture mode)</li>
+          <li><a href="https://playwright.dev/docs/intro" rel="noopener noreferrer">Playwright</a>: local screenshots (pre-installed tool, not a project dependency)</li>
+        </ul>
+        <p class="muted">The charts are hand-written inline SVG. There are no runtime dependencies.</p>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <a href="/resources.html">Resources</a>
+      <span>Data: SEC EDGAR and FRED, Federal Reserve Bank of St. Louis</span>
+      <span>No AI is used · Not investment advice</span>
+    </footer>
+    <script type="module" src="/src/ui/resources.ts"></script>
+  </body>
+</html>
