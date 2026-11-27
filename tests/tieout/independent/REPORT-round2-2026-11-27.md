@@ -325,3 +325,9 @@ Re-ran `tests/tieout/independent/dump-api.mjs` + `tieout.mjs` (updated) on the n
 | net_margin | FY25 (Dec-25) | 27.3% | 27.3% | recomputed | PASS |
 
 NOTE not-reported cells in the three profiles: 0; format.ts mentions "not reported": true
+
+## Round 3 (commit 7a0b43a): missing input is "not reported", not n.m.
+- `missing.test.ts` updated: with AAPL FY26 operating income removed, operating income growth and margin are `not-reported` (renders "not reported") with note "Not reported: needs FY26 (Sep-26) operating income, which is not reported."; EBITDA growth and margin are `not-reported` with "Not reported: needs FY26 (Sep-26) EBITDA, which is not reported."; EBITDA note "EBITDA needs both operating income and D&A; operating income is not reported." The zero-revenue test still expects n.m. margins (revenue <= 0 stays n.m.), and passes.
+- `tieout.mjs` re-run against a fresh API dump: AAPL 94/0, MSFT 99/0, KO 94/0. Zero value or status differences versus the round-2 dump for all 3 tickers (all cells compared).
+- `npm test`: 14 files, 123 tests pass. `npm run build`: passes.
+- Verdict: PASS.
