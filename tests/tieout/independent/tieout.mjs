@@ -7,9 +7,9 @@ const dump = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const out = [];
 const counts = {};
 const fails = [];
-function rec(t, metric, fy, page, filing, src, ok) {
+function rec(t, metric, fy, page, filing, src, ok, tag) {
   counts[t] ??= { pass: 0, fail: 0 }; ok ? counts[t].pass++ : (counts[t].fail++, fails.push(`${t} ${metric} ${fy}: page=${page} filing=${filing} (${src})`));
-  out.push({ t, row: `| ${metric} | ${fy} | ${page} | ${filing} | ${src} | ${ok ? "PASS" : "**FAIL**"} |` });
+  out.push({ t, row: `| ${metric} | ${fy} | ${page} | ${filing} | ${src} | ${ok ? (tag ? "PASS vs cited inputs; " + tag : "PASS") : "**FAIL**"} |` });
 }
 const num = (s) => { s = s.replace(/[$\s]/g, ""); if (s === "") return NaN; const neg = /^\(.*\)$/.test(s); const v = Number(s.replace(/[(),]/g, "")); return neg ? -v : v; };
 function parseMd(file) {
@@ -69,13 +69,13 @@ for (const T of ["AAPL", "MSFT", "KO"]) {
   rec(T, "DGS10 value/date", "-", `${m.dgs10.value} @ ${m.dgs10.sources[0].observationDate}`, "4.91 @ 2026-11-24", "fixtures/fred/DGS10-observations.json", m.dgs10.value === 4.91 && m.dgs10.sources[0].observationDate === "2026-11-24");
   rec(T, "FEDFUNDS value/date", "-", `${m.fedfunds.value} @ ${m.fedfunds.sources[0].observationDate}`, "3.88 @ 2026-10-01 (Oct-2026)", "fixtures/fred/FEDFUNDS-observations.json", m.fedfunds.value === 3.88 && m.fedfunds.sources[0].observationDate === "2026-10-01");
 
+  const idx3 = [N - 1, N - 2, N - 3];
+  const vals = { revenue: [], operating_income: [], net_income: [], da: [], cash: [], total_debt: [], diluted_shares: [] };
   // independent expected values (raw facts, 10-K only, latest filed per (start,end))
   const tenK = (arr) => arr.filter((f) => /^10-K/.test(f.form) && f.start && days(f.start, f.end) >= 350 && days(f.start, f.end) <= 380);
   const rawFY = (tags, end) => { for (const tg of tags) { const c = tenK(facts("us-gaap", tg)).filter((f) => f.end === end).sort((a, c2) => c2.filed.localeCompare(a.filed)); if (c.length) return { ...c[0], tag: tg }; } return null; };
   const rawInst = (tags, end) => { for (const tg of tags) { const c = facts("us-gaap", tg).filter((f) => /^10-K/.test(f.form) && !f.start && f.end === end).sort((a, c2) => c2.filed.localeCompare(a.filed)); if (c.length) return { ...c[0], tag: tg }; } return null; };
 
-  const idx3 = [N - 1, N - 2, N - 3];
-  const vals = { revenue: [], operating_income: [], net_income: [], da: [], cash: [], total_debt: [], diluted_shares: [] };
   const stmt = { revenue: [IS, cfg.rev], operating_income: [IS, cfg.oi], net_income: [IS, cfg.ni], da: [CF, cfg.da], diluted_shares: [IS, cfg.sh], cash: [BS, cfg.cash] };
   // header dates vs page years
   const isH = IS.header.map(hdrIso), bsH = BS.header.map(hdrIso);
@@ -94,7 +94,10 @@ for (const T of ["AAPL", "MSFT", "KO"]) {
     for (let k = 0; k < ncol; k++) {
       const yi = idx3[k], c = r.cells[yi], lab = years[yi].label;
       let fv, src;
-      if (id === "total_debt") { fv = cfg.debt.reduce((s, [l, n]) => s + find(BS, l, n)[k], 0) * 1e6; src = "R-BS: " + cfg.debt.map(([l]) => l).join(" + "); }
+      if (id === "total_debt") { fv = cfg.debt.reduce((s, [l, n]) => s + find(BS, l, n)[k], 0) * 1e6; src = "R-BS: " + cfg.debt.map(([l]) => l).join(" + ");
+        if (T !== "KO") { const fl = rawInst(["FinanceLeaseLiability"], years[yi].end); if (!fl) throw new Error("no finance lease " + T); fv += fl.val; src += ` + raw FinanceLeaseLiability ${fl.val / 1e6} (accn ${fl.accn})`; } }
+      else if (id === "da" && T === "MSFT") { const d = rawFY(["Depreciation"], years[yi].end), a = rawFY(["AmortizationOfIntangibleAssets"], years[yi].end); fv = d.val + a.val; src = `raw Depreciation ${d.val / 1e6} + Amortization ${a.val / 1e6} (computed, disclosed)`;
+        const cfv = find(CF, cfg.da[0])[k] * 1e6; rec(T, "D&A vs CF line (informational)", lab, fmtM(c.value), fmtM(cfv), "R-CF 'Depreciation, amortization, and other'", true, `DOES NOT TIE to CF line (${((c.value / cfv - 1) * 100).toFixed(1)}%); disclosed`); }
       else { const [P, lab2] = stmt[id]; fv = find(P, lab2[0], lab2[1] ?? 0)[k] * (id === "diluted_shares" ? cfg.shMult : 1e6); src = (P === IS ? "R-IS " : P === BS ? "R-BS " : "R-CF ") + `"${lab2[0]}"`; }
       filingVal[`${id}${yi}`] = fv;
       const unit = id === "diluted_shares" ? 1e6 : 1e6;
@@ -130,6 +133,12 @@ for (const T of ["AAPL", "MSFT", "KO"]) {
   });
   rec(T, `citation check: ${nsrc} SEC sources vs raw (tag,accn,form,filed,period,value,url)`, "all", bad.length ? bad.length + " bad" : "0 bad", "0 bad", "raw companyfacts", bad.length === 0);
   bad.forEach((x) => out.push({ t: T, row: `| ^ detail | | ${x} | | | |` }));
+  { const lab = (id) => rowOf(b, id).label; const exp = { AAPL: ["D&A", "Total debt (incl. finance leases)"], KO: ["D&A", "Total debt (incl. finance leases)"], MSFT: ["D&A (computed: depreciation + amortization of intangibles)", "Total debt (incl. finance leases)"] }[T];
+    rec(T, "row labels da / total_debt", "-", `${lab("da")} | ${lab("total_debt")}`, exp.join(" | "), "round-2 ruling", lab("da") === exp[0] && lab("total_debt") === exp[1]);
+    if (T === "MSFT") { const daCells = rowOf(b, "da").cells; const ok = daCells.every((c) => c.status === "computed" && c.formula && c.notes?.some((n) => /does not tie to the cash-flow line/i.test(n)));
+      rec(T, "D&A disclosure in cell notes (5/5)", "all", ok ? "present" : "missing", "present", "API cells", ok);
+      const eb = rowOf(b, "ebitda").cells.every((c) => c.notes?.some((n) => /does not tie to the cash-flow line/i.test(n))); rec(T, "EBITDA cells inherit D&A disclosure (5/5)", "all", eb ? "present" : "missing", "present", "API cells", eb);
+      const w = b.warnings.some((x) => /does not tie to the cash-flow statement/i.test(x)); rec(T, "page-level warning present", "-", w ? "present" : "missing", "present", "profile.warnings", w); } else { rec(T, "no spurious D&A warning", "-", b.warnings.length + " warnings", "no D&A-tie warning", "profile.warnings", !b.warnings.some((x) => /D&A/.test(x))); } }
   // latest 3 columns cite latest 10-K accn
   const latestOK = ["revenue", "operating_income", "net_income"].every((id) => idx3.every((yi) => rowOf(b, id).cells[yi].sources.every((s) => s.accn === cfg.expAcc)));
   rec(T, "IS rows for latest 3 FY cite latest 10-K accn", "FY-2..FY", latestOK ? "all" : "some other", cfg.expAcc, "fixtures/README", latestOK);
