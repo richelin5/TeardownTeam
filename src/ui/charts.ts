@@ -3,9 +3,11 @@ import type { FinancialTable, Row } from "../contracts/profile";
 import { svg } from "./dom";
 import { formatValue } from "./format";
 
-const W = 520;
-const H = 260;
-const PAD = { l: 52, r: 16, t: 28, b: 36 };
+/** Wide layout (desktop/print) and a narrow one for phones, drawn ~1:1 so SVG text stays >= 11 px rendered. */
+export type ChartSize = { W: number; H: number; narrow: boolean };
+export const WIDE: ChartSize = { W: 520, H: 260, narrow: false };
+export const NARROW: ChartSize = { W: 330, H: 250, narrow: true };
+const PAD = { l: 52, r: 12, t: 28, b: 36 };
 
 function row(table: FinancialTable, id: Row["id"]): Row | undefined {
   return table.rows.find((r) => r.id === id);
@@ -15,7 +17,8 @@ function shortLabel(label: string): string {
   return label.split(" ")[0] ?? label; // "FY26"
 }
 
-export function revenueChart(table: FinancialTable): SVGSVGElement {
+export function revenueChart(table: FinancialTable, size: ChartSize = WIDE): SVGSVGElement {
+  const { W, H } = size;
   const rev = row(table, "revenue");
   const values = rev?.cells.map((c) => c.value) ?? [];
   const max = Math.max(1, ...values.map((v) => (v !== null && v > 0 ? v : 0)));
@@ -52,7 +55,8 @@ const SERIES: { id: Row["id"]; name: string; cls: string }[] = [
   { id: "net_margin", name: "Net margin", cls: "line-net" },
 ];
 
-export function marginChart(table: FinancialTable): SVGSVGElement {
+export function marginChart(table: FinancialTable, size: ChartSize = WIDE): SVGSVGElement {
+  const { W, H } = size;
   const all = SERIES.flatMap((s) => row(table, s.id)?.cells.map((c) => c.value) ?? []).filter((v): v is number => v !== null);
   const hi = Math.max(0.1, ...all);
   const lo = Math.min(0, ...all);
@@ -94,11 +98,13 @@ export function marginChart(table: FinancialTable): SVGSVGElement {
     });
   });
   // Legend (dash patterns, so color is not the only cue).
+  // Narrow: one legend entry per row so nothing is clipped; wide: one row.
   SERIES.forEach((s, i) => {
-    const lx = PAD.l + 8 + i * 150;
-    root.append(svg("line", { x1: lx, x2: lx + 22, y1: H - 2, y2: H - 2, class: `line ${s.cls}` }));
-    root.append(svg("text", { x: lx + 26, y: H + 2, class: "chart-legend" }, s.name));
+    const lx = size.narrow ? PAD.l : PAD.l + 8 + i * 150;
+    const ly = size.narrow ? H + 4 + i * 16 : H - 2;
+    root.append(svg("line", { x1: lx, x2: lx + 22, y1: ly, y2: ly, class: `line ${s.cls}` }));
+    root.append(svg("text", { x: lx + 28, y: ly + 4, class: "chart-legend" }, s.name));
   });
-  root.setAttribute("viewBox", `0 0 ${W} ${H + 8}`);
+  root.setAttribute("viewBox", `0 0 ${W} ${size.narrow ? H + 4 + SERIES.length * 16 : H + 8}`);
   return root;
 }

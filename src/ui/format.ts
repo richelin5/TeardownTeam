@@ -38,7 +38,11 @@ export function formatSourceValue(unit: Metric["unit"], v: number): string {
 }
 
 export function describeSource(s: Source, unit: Metric["unit"]): string {
-  if (s.kind === "fred") return `FRED ${s.seriesId}, observation ${s.observationDate}`;
+  if (s.kind === "fred") {
+    return s.seriesId === "FEDFUNDS"
+      ? `FRED ${s.seriesId}, ${monthYear(s.observationDate)} monthly average`
+      : `FRED ${s.seriesId}, observation ${s.observationDate}`;
+  }
   const period = s.periodStart ? `${s.periodStart} to ${s.periodEnd}` : `at ${s.periodEnd}`;
   const valueUnit = unit === "shares" ? "shares" : "USD";
   return `${s.form} filed ${s.filed}, accn ${s.accn}, ${s.taxonomy}:${s.tag} = ${formatSourceValue(valueUnit, s.value)} (${period})`;
@@ -50,7 +54,32 @@ export function safeUrl(url: string | undefined): string | null {
   return url && SAFE_URL.test(url) ? url : null;
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-10-01" -> "Oct-2026". Falls back to the input when it isn't an ISO date. */
+export function monthYear(iso: string): string {
+  const m = /^(\d{4})-(\d{2})/.exec(iso);
+  const name = m ? MONTHS[Number(m[2]) - 1] : undefined;
+  return m && name ? `${name}-${m[1]}` : iso;
+}
+
+/** Date caption next to a macro rate: monthly series show the month, daily series keep the date. */
+export function macroDateText(s: Source | undefined): string {
+  if (!s || s.kind !== "fred") return "";
+  return s.seriesId === "FEDFUNDS" ? `${monthYear(s.observationDate)} average` : `as of ${s.observationDate}`;
+}
+
+/** "Dec 31" for a fixed 1231 year end; otherwise "Sep (latest FY ended 2026-09-26)" (52/53-week years float). */
+export function fiscalYearEndText(mmdd: string, latestEnd?: string): string {
+  const mi = Number(mmdd.slice(0, 2)) - 1;
+  const month = MONTHS[mi];
+  if (!month || !/^\d{4}$/.test(mmdd)) return mmdd;
+  if (mmdd === "1231") return "Dec 31";
+  return latestEnd ? `${month} (latest FY ended ${latestEnd})` : month;
+}
+
 export function statusText(m: Metric): string {
+  if (m.sources.length > 0 && m.sources.every((s) => s.kind === "fred")) return "FRED observation";
   switch (m.status) {
     case "reported":
       return "Reported (single XBRL fact)";
@@ -59,6 +88,6 @@ export function statusText(m: Metric): string {
     case "n.m.":
       return "Not meaningful";
     case "not-reported":
-      return "Not reported";
+      return "not reported";
   }
 }

@@ -1,11 +1,13 @@
 /** Profile page: search → GET /api/teardown → render. Text-only DOM APIs; no metric math here. */
 import type { ErrorBody, FilingRef, Metric, Profile } from "../contracts/profile";
-import { revenueChart, marginChart } from "./charts";
+import { revenueChart, marginChart, NARROW, WIDE } from "./charts";
 import { clear, el } from "./dom";
-import { describeSource, formatLong, formatValue, safeUrl, statusText } from "./format";
+import { describeSource, fiscalYearEndText, formatLong, formatValue, macroDateText, safeUrl, statusText } from "./format";
+import { normalizeTickerUi } from "./ticker";
 import "./styles.css";
 
-type Note = { n: number; context: string; metric: Metric };
+/** n = footnote number (0 when the cell has no source and so gets no footnote); pl = print source letters. */
+type Note = { id: number; n: number; rowLabel: string; colLabel: string; colIdx: number; derived: boolean; context: string; metric: Metric; pl: HTMLElement | null };
 
 const app = document.getElementById("app")!;
 const form = document.getElementById("search") as HTMLFormElement;
@@ -13,32 +15,42 @@ const input = document.getElementById("ticker") as HTMLInputElement;
 const tip = document.getElementById("tip")!;
 const status = document.getElementById("status")!;
 
-const notes: Note[] = [];
+const cells: Note[] = []; // every rendered number, for tooltips
+const notes: Note[] = []; // only cells with >= 1 source, numbered 1..n
 const byCellId = new Map<string, Note>();
+let loadedTicker = "";
 
 function link(url: string | undefined, text: string): HTMLElement {
   const safe = safeUrl(url);
   return safe ? el("a", { href: safe, rel: "noopener noreferrer", target: "_blank" }, text) : el("span", {}, text);
 }
 
-function register(context: string, metric: Metric): Note {
-  const note = { n: notes.length + 1, context, metric };
-  notes.push(note);
-  byCellId.set(`m${note.n}`, note);
+function register(rowLabel: string, colLabel: string, colIdx: number, metric: Metric, derived: boolean): Note {
+  const note: Note = { id: cells.length + 1, n: 0, rowLabel, colLabel, colIdx, derived, context: colLabel ? `${rowLabel}, ${colLabel}` : rowLabel, metric, pl: null };
+  cells.push(note);
+  if (metric.sources.length > 0) {
+    notes.push(note);
+    note.n = notes.length;
+  }
+  byCellId.set(`m${note.id}`, note);
   return note;
 }
 
-/** A focusable number with a tooltip and a footnote link into the sources panel. */
-function numberCell(context: string, metric: Metric): HTMLElement {
-  const note = register(context, metric);
+/** A focusable number with a tooltip and (when it has a source) a footnote link into the sources panel. */
+function numberCell(rowLabel: string, colLabel: string, colIdx: number, metric: Metric, derived = false): HTMLElement {
+  const note = register(rowLabel, colLabel, colIdx, metric, derived);
   const missing = metric.status === "not-reported" || metric.status === "n.m.";
   const wrap = el(
     "span",
-    { class: `num${missing ? " missing" : ""}`, tabindex: "0", "data-note": `m${note.n}`, "aria-describedby": "tip" },
+    { class: `num${missing ? " missing" : ""}`, tabindex: "0", "data-note": `m${note.id}`, "aria-describedby": "tip" },
     formatValue(metric),
   );
   if (metric.status === "computed") wrap.append(el("span", { class: "cmark", "aria-label": "computed" }, "c"));
-  wrap.append(el("a", { class: "fn", href: `#src-${note.n}`, tabindex: "-1", "aria-label": `source ${note.n}` }, String(note.n)));
+  if (note.n) {
+    wrap.append(el("a", { class: "fn", href: `#src-${note.n}`, tabindex: "-1", "aria-label": `source ${note.n}` }, String(note.n)));
+    note.pl = el("span", { class: "pl", "aria-hidden": "true" });
+    wrap.append(note.pl);
+  }
   return wrap;
 }
 
@@ -51,15 +63,18 @@ function tooltipContent(note: Note): Node[] {
   if (m.formula) out.push(el("div", { class: "tip-formula" }, `Formula: ${m.formula}`));
   const list = el("ul", {});
   const unit = m.unit === "shares" ? "shares" : "USD";
-  for (const s of m.sources) list.append(el("li", {}, describeSource(s, unit)));
+  const missing = m.status === "not-reported" || m.status === "n.m.";
+  for (const s of m.sources) list.append(el("li", {}, missing ? link(s.url, describeSource(s, unit)) : describeSource(s, unit)));
   if (m.sources.length) out.push(list);
   for (const n of m.notes ?? []) out.push(el("div", { class: "tip-note" }, n));
   return out;
 }
 
+let activeTarget: HTMLElement | null = null;
 function showTip(target: HTMLElement) {
   const note = byCellId.get(target.dataset.note ?? "");
   if (!note) return;
+  activeTarget = target;
   clear(tip);
   tip.append(...tooltipContent(note));
   tip.hidden = false;
@@ -72,34 +87,56 @@ function showTip(target: HTMLElement) {
 }
 const hideTip = () => {
   tip.hidden = true;
+  activeTarget = null;
 };
 
+const numOf = (e: Event) => (e.target as HTMLElement).closest<HTMLElement>("[data-note]");
+
 document.addEventListener("mouseover", (e) => {
-  const t = (e.target as HTMLElement).closest<HTMLElement>("[data-note]");
+  const t = numOf(e);
   if (t) showTip(t);
   else if (!(e.target as HTMLElement).closest("#tip")) hideTip();
 });
 document.addEventListener("focusin", (e) => {
-  const t = (e.target as HTMLElement).closest<HTMLElement>("[data-note]");
+  const t = numOf(e);
   if (t) showTip(t);
   else hideTip();
 });
-// Footnote links and printing open the collapsed sources panel.
-document.addEventListener("click", (e) => {
-  const a = (e.target as HTMLElement).closest<HTMLAnchorElement>("a.fn");
-  const details = document.getElementById("sources-details") as HTMLDetailsElement | null;
-  if (a && details) details.open = true;
+// Touch: a tap on a number shows its tooltip; a tap anywhere else dismisses it.
+document.addEventListener("pointerup", (e) => {
+  if (e.pointerType !== "touch") return;
+  const t = numOf(e);
+  if (t) showTip(t);
+  else if (!(e.target as HTMLElement).closest("#tip")) hideTip();
 });
-const openForPrint = () => {
+function openSources(hash?: string) {
   const details = document.getElementById("sources-details") as HTMLDetailsElement | null;
   if (details) details.open = true;
-};
-window.addEventListener("beforeprint", openForPrint);
-window.matchMedia("print").addEventListener("change", (e) => {
-  if (e.matches) openForPrint();
+  if (hash) location.hash = hash;
+}
+// Footnote links open the collapsed sources panel.
+document.addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).closest("a.fn")) openSources();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") hideTip();
+  if (e.key === "Escape") {
+    hideTip();
+    return;
+  }
+  const t = e.target as HTMLElement;
+  if (!t.matches?.(".num[data-note]")) return;
+  if (e.key === "Enter") {
+    // Enter opens the source: expand the panel and jump to this number's entry.
+    const note = byCellId.get(t.dataset.note ?? "");
+    if (note && note.n) {
+      e.preventDefault();
+      openSources(`#src-${note.n}`);
+    }
+  } else if (e.key === " ") {
+    e.preventDefault();
+    if (!tip.hidden && activeTarget === t) hideTip();
+    else showTip(t);
+  }
 });
 
 function filingLine(label: string, f: FilingRef | null): HTMLElement {
@@ -107,16 +144,9 @@ function filingLine(label: string, f: FilingRef | null): HTMLElement {
   return el("span", { class: "filing" }, `${label}: `, link(f.url, `${f.form} for period ${f.reportDate}, filed ${f.filed}`), ` (accn ${f.accn})`);
 }
 
-function fye(mmdd: string): string {
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const m = months[Number(mmdd.slice(0, 2)) - 1];
-  return m ? `${m} ${Number(mmdd.slice(2))} (SEC: ${mmdd})` : mmdd;
-}
-
 function macroItem(m: Metric): HTMLElement {
-  const src = m.sources[0];
-  const date = src && src.kind === "fred" ? `as of ${src.observationDate}` : "";
-  return el("div", { class: "macro-item" }, el("span", { class: "macro-label" }, m.label), " ", numberCell(m.label, m), " ", el("span", { class: "muted" }, date));
+  const date = macroDateText(m.sources[0]);
+  return el("div", { class: "macro-item" }, el("span", { class: "macro-label" }, m.label), " ", numberCell(m.label, "", -1, m), " ", el("span", { class: "muted" }, date));
 }
 
 function table(p: Profile): HTMLElement {
@@ -129,33 +159,113 @@ function table(p: Profile): HTMLElement {
     tbody.append(
       el("tr", { class: cls },
         el("th", { scope: "row", class: "rowhead" }, r.label),
-        ...r.cells.map((c, i) => el("td", {}, numberCell(`${r.label}, ${t.years[i]!.label}`, c)))),
+        ...r.cells.map((c, i) => el("td", {}, numberCell(r.label, t.years[i]!.label, i, c, r.kind !== "value")))),
     );
   }
-  return el("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "Five-year financials" },
-    el("table", { class: "fin" }, el("caption", {}, `Five fiscal years from 10-K XBRL data. ${p.units}.`), thead, tbody));
+  return el("div", { class: "table-block" },
+    el("p", { class: "table-caption muted", id: "table-caption" }, `Five fiscal years from 10-K XBRL data. ${p.units}.`),
+    el("div", { class: "table-wrap", role: "region", "aria-label": "Five-year financials", "aria-describedby": "table-caption" },
+      el("table", { class: "fin" }, thead, tbody)),
+    el("p", { class: "swipe-hint muted", "aria-hidden": "true" }, "Swipe for more years \u2192"));
 }
 
-function sourcesPanel(): HTMLElement {
+const shortYear = (label: string) => label.split(" ")[0] ?? label;
+
+/** "FY22–FY25" for a run of 3+ consecutive columns, otherwise a comma list. */
+function yearRanges(idx: number[], labels: string[]): string {
+  const sorted = [...new Set(idx)].sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j]! + 1) j++;
+    const a = shortYear(labels[sorted[i]!] ?? "");
+    const b = shortYear(labels[sorted[j]!] ?? "");
+    if (j - i >= 2) parts.push(`${a}\u2013${b}`);
+    else for (let k = i; k <= j; k++) parts.push(shortYear(labels[sorted[k]!] ?? ""));
+    i = j + 1;
+  }
+  return parts.join(", ");
+}
+
+type Group = { letter: string; head: string; url: string; rows: Map<string, number[]>; derivedRows: Map<string, number[]> };
+
+/** Endnote wording drops the formula parenthetical: "EBITDA (computed: ...)" -> "EBITDA (computed)". */
+const endnoteLabel = (l: string) => l.replace(/\(computed:[^)]*\)/, "(computed)");
+
+/** Print only: one lettered endnote per filing (or FRED observation), listing the rows and years it supports. */
+function endnotes(yearLabels: string[]): HTMLElement {
+  const groups = new Map<string, Group>();
+  for (const note of notes) {
+    const letters: string[] = [];
+    for (const s of note.metric.sources) {
+      const key = s.kind === "sec" ? `sec:${s.accn}` : `fred:${s.seriesId}:${s.observationDate}`;
+      let g = groups.get(key);
+      if (!g) {
+        const letter = letterFor(groups.size);
+        const head = s.kind === "sec" ? `${s.form} filed ${s.filed}, accn ${s.accn}` : describeSource(s, "USD");
+        g = { letter, head, url: s.url, rows: new Map(), derivedRows: new Map() };
+        groups.set(key, g);
+      }
+      const target = note.derived ? g.derivedRows : g.rows;
+      const label = endnoteLabel(note.rowLabel);
+      const cols = target.get(label) ?? [];
+      cols.push(note.colIdx);
+      target.set(label, cols);
+      if (!letters.includes(g.letter)) letters.push(g.letter);
+    }
+    if (note.pl) note.pl.textContent = letters.join(",");
+  }
+  const ul = el("ul", { class: "endnotes" });
+  for (const g of groups.values()) {
+    // Growth and margin rows are listed only when a filing supports nothing else (e.g. the prior-year base).
+    const shown = g.rows.size ? g.rows : g.derivedRows;
+    const what = [...shown].map(([row, idx]) => (idx[0] === -1 ? row : `${row} ${yearRanges(idx, yearLabels)}`)).join("; ");
+    ul.append(el("li", {}, el("strong", {}, `[${g.letter}] `), `${g.head}, ${g.url}: ${what}`));
+  }
+  return el("div", { class: "endnotes-block" }, ul);
+}
+
+function letterFor(i: number): string {
+  const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  return i < 26 ? A[i]! : `${A[Math.floor(i / 26) - 1]}${A[i % 26]}`;
+}
+
+function sourcesPanel(yearLabels: string[]): HTMLElement {
   const ol = el("ol", { class: "sources" });
   for (const note of notes) {
     const m = note.metric;
-    const li = el("li", { id: `src-${note.n}` }, el("strong", {}, note.context), `: ${formatLong(m)} · ${statusText(m)}`);
+    const li = el("li", { id: `src-${note.n}` }, el("strong", {}, note.context), `: ${formatLong(m)} \u00b7 ${statusText(m)}`);
     if (m.formula) li.append(el("div", {}, `Formula: ${m.formula}`));
     const unit = m.unit === "shares" ? "shares" : "USD";
-    for (const s of m.sources) li.append(el("div", { class: "src" }, link(s.url, describeSource(s, unit)), el("span", { class: "print-url" }, ` ${s.url}`)));
+    for (const s of m.sources) li.append(el("div", { class: "src" }, link(s.url, describeSource(s, unit))));
     for (const n of m.notes ?? []) li.append(el("div", { class: "muted" }, n));
     ol.append(li);
   }
+  const noSource = cells.length - notes.length;
   return el("section", { class: "panel", "aria-labelledby": "sources-h" },
     el("h2", { id: "sources-h" }, "Sources & notes"),
-    el("p", { class: "muted" }, "Every number on this page, with the filing (form, filing date, accession number) and XBRL tag it comes from, or its FRED series and date. c = computed from the listed inputs."),
-    el("details", { id: "sources-details" }, el("summary", {}, `Show all ${notes.length} sources`), ol));
+    el("p", { class: "muted screen-only" }, `Every sourced number on this page, with the filing (form, filing date, accession number) and XBRL tag it comes from, or its FRED series and date. c = computed from the listed inputs.${noSource ? " Cells shown as not reported or n.m. without a source have no entry here; hover them for the reason." : ""}`),
+    el("details", { id: "sources-details", class: "screen-only" }, el("summary", {}, `Show all ${notes.length} sources`), ol),
+    endnotes(yearLabels));
 }
+
+let currentTable: Profile["table"] | null = null;
+const phone = window.matchMedia("(max-width: 600px)");
+/** Phones get a narrower viewBox so chart text renders at >= 11 px. */
+function drawCharts() {
+  const host = document.getElementById("charts");
+  if (!host || !currentTable) return;
+  const size = phone.matches ? NARROW : WIDE;
+  clear(host);
+  host.append(el("figure", {}, revenueChart(currentTable, size)), el("figure", {}, marginChart(currentTable, size)));
+}
+phone.addEventListener("change", drawCharts);
 
 function render(p: Profile) {
   notes.length = 0;
+  cells.length = 0;
   byCellId.clear();
+  loadedTicker = p.company.ticker;
   clear(app);
   const c = p.company;
   if (p.dataMode === "fixtures") {
@@ -167,7 +277,7 @@ function render(p: Profile) {
       el("p", { class: "facts" },
         el("span", {}, `CIK ${c.cik}`),
         el("span", {}, `Industry: SIC ${c.sic} · ${c.sicDescription}`),
-        el("span", {}, `Fiscal year end: ${fye(c.fiscalYearEnd)}`),
+        el("span", {}, `Fiscal year end: ${fiscalYearEndText(c.fiscalYearEnd, p.table.years[p.table.years.length - 1]?.end)}`),
         c.exchanges.length ? el("span", {}, c.exchanges.join(", ")) : null),
       el("p", { class: "filings" }, filingLine("Latest 10-K", p.filings.latest10K), filingLine("Latest 10-Q", p.filings.latest10Q))),
     el("section", { class: "macro", "aria-label": "Rates" }, macroItem(p.macro.dgs10), macroItem(p.macro.fedfunds), el("span", { class: "muted attribution" }, p.macro.attribution)),
@@ -175,10 +285,12 @@ function render(p: Profile) {
   if (p.warnings.length) app.append(el("ul", { class: "warnings" }, ...p.warnings.map((w) => el("li", {}, w))));
   app.append(
     table(p),
-    el("p", { class: "legend muted" }, "c = computed · hover or focus any number for its source · numbers link to the sources panel"),
-    el("section", { class: "charts" }, el("figure", {}, revenueChart(p.table)), el("figure", {}, marginChart(p.table))),
-    sourcesPanel(),
+    el("p", { class: "legend muted" }, "c = computed \u00b7 hover, focus or tap any number for its source \u00b7 Enter opens the source"),
+    el("section", { class: "charts", id: "charts" }),
+    sourcesPanel(p.table.years.map((y) => y.label)),
   );
+  currentTable = p.table;
+  drawCharts();
   document.title = `${c.ticker}: ${c.name} | Company Teardown`;
 }
 
@@ -200,16 +312,18 @@ function intro() {
     ex));
 }
 
+const BAD_TICKER = "That doesn't look like a ticker. Use 1\u201310 letters, digits or '-'.";
+
 async function load(ticker: string) {
-  status.textContent = `Loading ${ticker}…`;
-  message("info", `Loading ${ticker}…`);
+  status.textContent = `Loading ${ticker}\u2026`;
+  message("info", `Loading ${ticker}\u2026`);
   try {
     const res = await fetch(`/api/teardown?ticker=${encodeURIComponent(ticker)}`, { headers: { Accept: "application/json" } });
     const body = (await res.json()) as Profile | ErrorBody;
     if (!res.ok || "error" in body) {
       const e = "error" in body ? body.error : { code: "internal", message: "Unexpected response." };
       const text =
-        res.status === 400 ? "That doesn't look like a ticker. Use 1–10 letters, digits or '-'."
+        res.status === 400 ? BAD_TICKER
         : res.status === 404 ? e.message
         : res.status === 422 ? "This filer isn't supported in v1 (foreign/IFRS filer or no US GAAP data)."
         : "SEC or FRED didn't respond. Try again in a minute.";
@@ -225,21 +339,32 @@ async function load(ticker: string) {
   }
 }
 
+/** Same normalization as the server, before fetch and before pushState. */
+function lookup(raw: string, push: boolean) {
+  const t = normalizeTickerUi(raw);
+  if (!t) {
+    message("error", BAD_TICKER);
+    status.textContent = BAD_TICKER;
+    return;
+  }
+  input.value = t;
+  if (push) history.pushState(null, "", `/?ticker=${encodeURIComponent(t)}`);
+  void load(t);
+}
+
 form.addEventListener("submit", (e) => {
   e.preventDefault();
-  const t = input.value.trim().toUpperCase();
-  if (!t) return;
-  history.pushState(null, "", `/?ticker=${encodeURIComponent(t)}`);
-  void load(t);
+  if (!input.value.trim()) return;
+  lookup(input.value, true);
 });
 
 function fromUrl() {
   const t = new URLSearchParams(location.search).get("ticker");
   if (t) {
-    input.value = t.toUpperCase();
-    void load(t.toUpperCase());
+    // A hash-only change (footnote jumps) fires popstate too; don't reload the profile for it.
+    if (loadedTicker && normalizeTickerUi(t) === loadedTicker && document.querySelector("table.fin")) return;
+    lookup(t, false);
   } else intro();
 }
 window.addEventListener("popstate", fromUrl);
 fromUrl();
-
