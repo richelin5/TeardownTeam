@@ -29,7 +29,15 @@ http
       res.end(await r.text());
       return;
     }
-    let path = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, "");
+    let decoded;
+    try {
+      decoded = decodeURIComponent(url.pathname);
+    } catch {
+      res.writeHead(400, { ...headers, "content-type": "text/plain" });
+      res.end("Bad request");
+      return;
+    }
+    let path = normalize(decoded).replace(/^(\.\.[/\\])+/, "");
     if (path.endsWith("/")) path += "index.html";
     try {
       const body = await readFile(join(root, path));
@@ -40,4 +48,4 @@ http
       res.end("Not found");
     }
   })
-  .listen(port, () => console.log(`preview (fixture mode) on http://localhost:${port}`));
+  .listen(port, "127.0.0.1", () => console.log(`preview (fixture mode) on http://127.0.0.1:${port}`));
