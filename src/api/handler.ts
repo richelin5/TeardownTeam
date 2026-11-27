@@ -21,6 +21,12 @@ export type HandlerDeps = {
 
 export const CACHE_OK = "public, durable, s-maxage=3600, stale-while-revalidate=86400";
 export const CACHE_ERR = "public, s-maxage=60";
+/** 200 profile with a macro series missing because FRED failed: retry soon, no long stale-while-revalidate (L2). */
+export const CACHE_DEGRADED = "public, durable, s-maxage=300";
+/** 502 caused by an upstream 403/429 (we are being throttled): keep hammering off for 5 min at the CDN (H1). */
+export const CACHE_RATE_LIMITED = "public, s-maxage=300";
+/** Canonicalisation redirect (M2): the mapping input -> normalized ticker never changes, so cache it long. */
+export const CACHE_REDIRECT = "public, durable, s-maxage=86400";
 
 // Module-level cache survives across invocations on a warm instance.
 const sharedCache = new TtlCache();
@@ -37,6 +43,19 @@ export function defaultDeps(env: Record<string, string | undefined> = process.en
   };
 }
 
+/**
+ * RESIDUAL RISK (H1), read before relying on this file for upstream protection.
+ * - The per-IP rate limit in netlify/functions/teardown.mts is the only code-based limit available on
+ *   non-Enterprise plans. A site-wide ("domain"-only) rule is Enterprise-only, so there is NO global cap
+ *   on our outbound SEC/FRED traffic. A botnet using many IPs and many distinct valid tickers can still
+ *   bypass the per-IP limit and drive cold SEC calls (SEC allows 10 req/s per client identity, ours is shared).
+ * - Mitigations in place: (1) the durable CDN cache (one cold build per ticker per hour across all edges,
+ *   canonical-ticker redirects so case/format variants share one cache key), (2) the per-IP limit,
+ *   (3) the shared upstream limiter and <= 3 SEC calls per cold build, (4) a 5-minute CDN cache on 502s
+ *   caused by SEC/FRED 403/429, so a throttled period is not retried per request.
+ * - v2 plan: keep raw upstream JSON in Netlify Blobs and add a shared token bucket (also in Blobs) that all
+ *   function instances consult before any SEC call, giving a true global cap independent of plan.
+ */
 const BASE_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "x-content-type-options": "nosniff",
@@ -65,7 +84,24 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
   }
   let ticker: string;
   try {
-    ticker = normalizeTicker(new URL(req.url).searchParams.get("ticker"));
+    const params = new URL(req.url).searchParams;
+    // Duplicate ticker params would make the CDN cache key ambiguous: reject.
+    if (params.getAll("ticker").length > 1) throw new BadRequestError("Duplicate ticker");
+    const raw = params.get("ticker");
+    ticker = normalizeTicker(raw);
+    // M2: one canonical cache key per ticker. Any spelling that differs from the normalized form is redirected.
+    if (raw !== ticker) {
+      return new Response(null, {
+        status: 308,
+        headers: {
+          ...BASE_HEADERS,
+          location: `/api/teardown?ticker=${encodeURIComponent(ticker)}`,
+          "netlify-cdn-cache-control": CACHE_REDIRECT,
+          "cache-control": "public, max-age=0, must-revalidate",
+          "netlify-vary": "query=ticker",
+        },
+      });
+    }
   } catch {
     return err(400, "bad_request", "Invalid ticker. Use 1-10 letters, digits or '-'.");
   }
@@ -79,7 +115,10 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       log: deps.log,
       ...(deps.now ? { now: deps.now } : {}),
     });
-    return json(200, profile, CACHE_OK, { "netlify-cache-tag": `ticker-${ticker}` });
+    // L2: any macro series not reported (FRED failure) -> short cache so recovery is picked up quickly.
+    const degraded = Object.values(profile.macro).some((m) => typeof m === "object" && m !== null && "status" in m && m.status === "not-reported");
+    if (degraded) deps.log(`degraded macro for ${ticker}: short cache`);
+    return json(200, profile, degraded ? CACHE_DEGRADED : CACHE_OK, { "netlify-cache-tag": `ticker-${ticker}` });
   } catch (e) {
     if (e instanceof BadRequestError) return err(400, "bad_request", "Invalid request.");
     if (e instanceof NotFoundError) {
@@ -91,6 +130,12 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     }
     if (e instanceof UnsupportedFilerError) return err(422, "unsupported_filer", "This filer is not supported in v1 (foreign/IFRS or no US GAAP data).");
     if (e instanceof UpstreamError) {
+      if (e.status === 403 || e.status === 429) {
+        // Rate-limit signal (SEC answers 403 for blocked UA/IP and 429 for throttling). No URLs or secrets logged.
+        deps.log(`RATE_LIMITED by ${e.service} (status ${e.status}) for ${ticker}`);
+        return json(502, { error: { code: "upstream_error", message: "SEC or FRED is rate limiting us. Try again in a few minutes." } } satisfies ErrorBody, CACHE_RATE_LIMITED, { "retry-after": "300" });
+      }
+      // status 0 = network/timeout (thrown fetch) as mapped by the data layer.
       deps.log(`upstream ${e.service} status ${e.status} for ${ticker}`);
       return err(502, "upstream_error", "SEC or FRED did not respond. Try again in a minute.");
     }
@@ -98,7 +143,13 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       deps.log("server misconfigured: SEC_USER_AGENT and/or FRED_API_KEY not set");
       return err(500, "internal", "Server is not configured.", null);
     }
+    // Defensive: a raw fetch failure (TypeError) or abort/timeout that escaped the data layer is an upstream problem.
+    if (e instanceof TypeError || (e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError"))) {
+      deps.log(`upstream network failure for ${ticker}: ${e.name}`);
+      return err(502, "upstream_error", "SEC or FRED did not respond. Try again in a minute.");
+    }
+    // Unexpected/resolver crash: short error cache (not no-store) so a crashing ticker cannot be used to hammer upstream.
     deps.log(`internal error for ${ticker}: ${e instanceof Error ? e.name : "unknown"}`);
-    return err(500, "internal", "Internal error.", null);
+    return err(500, "internal", "Internal error.");
   }
 }
