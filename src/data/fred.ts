@@ -48,12 +48,18 @@ export async function fetchRate(id: FredSeriesId, deps: FredDeps): Promise<Metri
   const cacheKey = `fred:${id}`;
   let body = cache.get<Observations>(cacheKey);
   if (!body) {
-    const res = await fetchWithRetry(
-      deps.fetch,
-      fredObservationsUrl(id, deps.apiKey),
-      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) },
-      { sleep: deps.sleep },
-    );
+    let res: Response;
+    try {
+      res = await fetchWithRetry(
+        deps.fetch,
+        fredObservationsUrl(id, deps.apiKey),
+        { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) },
+        { sleep: deps.sleep },
+      );
+    } catch {
+      // Thrown fetch or timeout (M1). The original error may carry the URL (with the key), so it is dropped.
+      throw new UpstreamError("fred", 0, "network/timeout");
+    }
     // Never include the URL (it contains the key) in the error.
     if (!res.ok) throw new UpstreamError("fred", res.status);
     try {

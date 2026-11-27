@@ -12,12 +12,20 @@ import {
   type Row,
   type SecSource,
 } from "../contracts/profile";
-import { classify, isAnnualForm, toFiscalYear } from "./periods";
+import { classify, durationDays, isAnnualForm, toFiscalYear } from "./periods";
 import { filingUrl, type CompanyFacts, type Fact, type Submissions } from "./sec";
 import { CHAINS, TAG_NOTES } from "./tagChains";
 
 export const YEARS_SHOWN = 5;
 const RESTATEMENT_THRESHOLD = 0.005;
+
+/**
+ * Row labels emitted by the data layer. They extend the contract's ROW_LABELS where a finance-reviewer ruling
+ * changed the wording (round 1): total debt now always includes finance leases, and the D&A row says "computed"
+ * whenever any D&A cell is computed.
+ */
+export const LABELS: Record<Row["id"], string> = { ...ROW_LABELS, total_debt: "Total debt (incl. finance leases)" };
+export const DA_COMPUTED_LABEL = "D&A (computed: depreciation + amortization of intangibles)";
 
 type Picked = { tag: string; rank: number; fact: Fact; notes: string[] };
 
@@ -26,17 +34,25 @@ export type ResolveContext = {
   cik10: string;
   /** accn → primaryDocument, from submissions.filings.recent */
   primaryDocs: Map<string, string>;
+  /** fiscal period end (reportDate) → accn of the original 10-K for it, for "see filing" links */
+  annualByReportDate: Map<string, string>;
 };
 
 export function makeContext(facts: CompanyFacts, submissions: Submissions, cik10: string): ResolveContext {
   const r = submissions.filings.recent;
   const primaryDocs = new Map<string, string>();
+  const annualByReportDate = new Map<string, string>();
   r.accessionNumber.forEach((a, i) => {
     const doc = r.primaryDocument[i];
     if (doc) primaryDocs.set(a, doc);
+    const rd = r.reportDate[i];
+    // `recent` is newest first; keep the newest original 10-K per period end.
+    if (r.form[i] === "10-K" && rd && !annualByReportDate.has(rd)) annualByReportDate.set(rd, a);
   });
-  return { facts, cik10, primaryDocs };
+  return { facts, cik10, primaryDocs, annualByReportDate };
 }
+
+const sourceUrl = (ctx: ResolveContext, accn: string): string => filingUrl(ctx.cik10, accn, ctx.primaryDocs.get(accn)) ?? "";
 
 function unitFacts(ctx: ResolveContext, tag: string, unit: "USD" | "shares"): Fact[] {
   return ctx.facts.facts["us-gaap"]?.[tag]?.units[unit] ?? [];
@@ -88,7 +104,7 @@ function toSource(ctx: ResolveContext, p: Picked): SecSource {
     accn: p.fact.accn,
     form: p.fact.form,
     filed: p.fact.filed,
-    url: filingUrl(ctx.cik10, p.fact.accn, ctx.primaryDocs.get(p.fact.accn)),
+    url: sourceUrl(ctx, p.fact.accn),
     ...(p.fact.start ? { periodStart: p.fact.start } : {}),
     periodEnd: p.fact.end,
     value: p.fact.val,
@@ -105,7 +121,25 @@ const notReported = (id: string, label: string, unit: MetricUnit, note: string, 
   notes: [note],
 });
 
-const NOT_TAGGED = "Not tagged in standard us-gaap XBRL for this fiscal year; see the filing.";
+const nm = (id: string, label: string, notes: string[], sources: Metric["sources"] = [], formula?: string): Metric => ({
+  id,
+  label,
+  value: null,
+  unit: "ratio",
+  status: "n.m.",
+  sources,
+  ...(formula ? { formula } : {}),
+  notes,
+});
+
+export const NOT_TAGGED = "Not tagged in standard XBRL; see filing";
+
+/** "Not tagged in standard XBRL; see filing: <10-K URL>" (the 10-K for that fiscal year end, when known). */
+export function notTaggedNote(ctx: ResolveContext, year: FiscalYear): string {
+  const accn = ctx.annualByReportDate.get(year.end);
+  const url = accn ? sourceUrl(ctx, accn) : "";
+  return url ? `${NOT_TAGGED}: ${url}` : `${NOT_TAGGED}.`;
+}
 
 function reportedMetric(ctx: ResolveContext, id: string, label: string, unit: MetricUnit, p: Picked): Metric {
   return { id, label, value: p.fact.val, unit, status: "reported", sources: [toSource(ctx, p)], ...(p.notes.length ? { notes: p.notes } : {}) };
@@ -113,37 +147,70 @@ function reportedMetric(ctx: ResolveContext, id: string, label: string, unit: Me
 
 function simpleMetric(ctx: ResolveContext, id: Row["id"], chain: readonly string[], unit: "USD" | "shares", year: FiscalYear, instant: boolean): Metric {
   const p = pickChain(ctx, chain, unit, year, instant);
-  return p ? reportedMetric(ctx, id, ROW_LABELS[id], unit === "USD" ? "USD" : "shares", p) : notReported(id, ROW_LABELS[id], unit, NOT_TAGGED);
+  return p ? reportedMetric(ctx, id, LABELS[id], unit === "USD" ? "USD" : "shares", p) : notReported(id, LABELS[id], unit, notTaggedNote(ctx, year));
 }
 
-export const MSFT_STYLE_DA_NOTE =
-  "Computed: Depreciation + Amortization of intangible assets (note disclosures, which may be rounded). The company does not tag a us-gaap D&A total; a cash-flow line using a company extension tag (e.g. 'Depreciation, amortization, and other') is not used.";
+const fmtM = (v: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(v / 1e6);
+
+// ---------------------------------------------------------------- D&A
+
+/** Cash-flow D&A line names known to be company extensions (not in companyfacts), by CIK. */
+const EXTENSION_CF_DA_LINE: Record<string, string> = {
+  "0000789019": "Depreciation, amortization, and other", // msft:DepreciationAmortizationAndOther
+};
+
+/** Finance-reviewer finding 1 wording. "rounded to $0.1bn" only when both inputs are multiples of $100M. */
+export function computedDaNote(cik10: string, rounded: boolean): string {
+  const line = EXTENSION_CF_DA_LINE[cik10];
+  return [
+    `Computed: us-gaap Depreciation + AmortizationOfIntangibleAssets, both disclosed in the notes ${rounded ? "rounded to $0.1bn" : "(values may be rounded)"}.`,
+    "The company does not tag a us-gaap D&A total.",
+    `This figure does not tie to the cash-flow ${line ? `line '${line}'` : "statement's D&A line"} (company extension tag, not in standard XBRL) and can differ from it by several percent in either direction.`,
+  ].join(" ");
+}
 
 function daMetric(ctx: ResolveContext, year: FiscalYear): Metric {
   const total = pickChain(ctx, CHAINS.da, "USD", year, false);
-  if (total) return reportedMetric(ctx, "da", ROW_LABELS.da, "USD", total);
+  if (total) return reportedMetric(ctx, "da", LABELS.da, "USD", total);
   const dep = pickChain(ctx, ["Depreciation"], "USD", year, false);
   const amort = pickChain(ctx, ["AmortizationOfIntangibleAssets"], "USD", year, false);
   if (dep && amort) {
     const ranked = (p: Picked): Picked => ({ ...p, rank: CHAINS.da.length });
+    const rounded = dep.fact.val % 1e8 === 0 && amort.fact.val % 1e8 === 0;
     return {
       id: "da",
-      label: ROW_LABELS.da,
+      label: DA_COMPUTED_LABEL,
       value: dep.fact.val + amort.fact.val,
       unit: "USD",
       status: "computed",
       sources: [toSource(ctx, ranked(dep)), toSource(ctx, ranked(amort))],
       formula: "Depreciation + AmortizationOfIntangibleAssets",
-      notes: [MSFT_STYLE_DA_NOTE, ...dep.notes, ...amort.notes],
+      notes: dedupe([computedDaNote(ctx.cik10, rounded), ...dep.notes, ...amort.notes]),
     };
   }
-  return notReported("da", ROW_LABELS.da, "USD", NOT_TAGGED);
+  return notReported("da", LABELS.da, "USD", notTaggedNote(ctx, year));
 }
 
-function totalDebtMetric(ctx: ResolveContext, year: FiscalYear): Metric {
-  const label = ROW_LABELS.total_debt;
+// ---------------------------------------------------------------- total debt
+
+export const FL_ADDED_NOTE = "Includes finance lease liabilities reported outside the debt lines";
+export const NO_FL_NOTE = "No finance lease liability tagged.";
+
+type DebtResult = {
+  metric: Metric;
+  /** A chosen debt line is a *CapitalLeaseObligations tag (finance leases inside the debt lines). */
+  cloChosen: boolean;
+  /** LongTermDebt year where the company also tagged LongTermDebtAndCapitalLeaseObligations(+Current) for the same date. */
+  comparative: { ltd: number; clo: number } | null;
+  financeLeasesAdded: boolean;
+  warnings: string[];
+};
+
+function totalDebtMetric(ctx: ResolveContext, year: FiscalYear): DebtResult {
+  const label = LABELS.total_debt;
   const parts: Picked[] = [];
   const notes: string[] = [];
+  const warnings: string[] = [];
   const direct = pickChain(ctx, CHAINS.debt_total_direct, "USD", year, true);
   if (direct) {
     parts.push(direct);
@@ -151,34 +218,133 @@ function totalDebtMetric(ctx: ResolveContext, year: FiscalYear): Metric {
     const nc = pickChain(ctx, CHAINS.debt_noncurrent, "USD", year, true);
     const cur = pickChain(ctx, CHAINS.debt_current, "USD", year, true);
     if (!nc || !cur) {
-      return notReported("total_debt", label, "USD", "Long-term debt (non-current and current) is not fully tagged in standard us-gaap XBRL at this date; see the filing.");
+      return {
+        metric: notReported("total_debt", label, "USD", `Long-term debt (non-current and current): ${notTaggedNote(ctx, year)}`),
+        cloChosen: false,
+        comparative: null,
+        financeLeasesAdded: false,
+        warnings,
+      };
     }
     parts.push(nc, cur);
   }
+
   const st = pickChain(ctx, CHAINS.st_borrowings, "USD", year, true);
-  if (st) parts.push(st);
-  else notes.push("No short-term borrowings (notes payable, short-term borrowings or commercial paper) tagged at this date.");
-  for (const p of parts) notes.push(...p.notes);
-  notes.push("Excludes operating lease liabilities.");
-  const value = parts.reduce((s, p) => s + p.fact.val, 0);
-  const sources = parts.map((p) => toSource(ctx, p));
-  if (parts.length === 1) {
-    return { id: "total_debt", label, value, unit: "USD", status: "reported", sources, notes: dedupe(notes) };
+  if (st) {
+    parts.push(st);
+    // Finance-reviewer finding 4: first match assumes CP ⊂ the chosen line. Check it.
+    if (st.tag !== "CommercialPaper") {
+      const cp = pickChain(ctx, CHAINS.commercial_paper, "USD", year, true);
+      if (cp && cp.fact.val > st.fact.val) {
+        notes.push(
+          `Check: commercial paper ($${fmtM(cp.fact.val)}M, us-gaap:CommercialPaper, ${cp.fact.accn}) exceeds the short-term borrowings line used ($${fmtM(st.fact.val)}M, us-gaap:${st.tag}), so it is not a subset of that line and total debt may be understated; see filing.`,
+        );
+        warnings.push(
+          `Total debt ${year.label}: commercial paper exceeds us-gaap:${st.tag}, so the assumption that it is included there does not hold. Total debt may be understated; check the filing.`,
+        );
+      }
+    }
+  } else {
+    notes.push("No short-term borrowings (notes payable, short-term borrowings or commercial paper) tagged at this date.");
   }
-  return {
-    id: "total_debt",
-    label,
-    value,
-    unit: "USD",
-    status: "computed",
-    sources,
-    formula: parts.map((p) => p.tag).join(" + "),
-    notes: dedupe(notes),
-  };
+
+  // Finance leases (finance-reviewer finding 2): include them for every company, exactly once.
+  const cloChosen = parts.some((p) => p.tag.includes("CapitalLeaseObligations"));
+  let includesFl = cloChosen;
+  let comparative: DebtResult["comparative"] = null;
+  if (!includesFl && direct) {
+    const [ncTag, curTag] = CHAINS.debt_incl_finance_leases;
+    const nc = pickChain(ctx, [ncTag], "USD", year, true);
+    const cur = pickChain(ctx, [curTag], "USD", year, true);
+    if (nc && cur) {
+      comparative = { ltd: direct.fact.val, clo: nc.fact.val + cur.fact.val };
+      // Same date, same total under both tags: LongTermDebt already includes the finance leases.
+      if (comparative.clo === comparative.ltd) includesFl = true;
+    }
+  }
+  const fl: Picked[] = [];
+  if (!includesFl) {
+    const total = pickChain(ctx, CHAINS.finance_lease_total, "USD", year, true);
+    if (total) {
+      fl.push(total);
+    } else {
+      for (const tag of CHAINS.finance_lease_parts) {
+        const p = pickChain(ctx, [tag], "USD", year, true);
+        if (p) fl.push({ ...p, rank: 1 });
+      }
+    }
+    if (fl.length) {
+      notes.push(`${FL_ADDED_NOTE} (${fl.map((p) => `us-gaap:${p.tag}`).join(" + ")}).`);
+      if (fl.length === 1 && fl[0]!.tag !== "FinanceLeaseLiability") {
+        notes.push(`Only us-gaap:${fl[0]!.tag} is tagged; the other portion of finance lease liabilities is not tagged in standard XBRL.`);
+      }
+    } else {
+      notes.push(NO_FL_NOTE);
+    }
+  }
+
+  const all = [...parts, ...fl];
+  for (const p of all) notes.push(...p.notes);
+  notes.push("Excludes operating lease liabilities.");
+  const value = all.reduce((s, p) => s + p.fact.val, 0);
+  const sources = all.map((p) => toSource(ctx, p));
+  const metric: Metric =
+    all.length === 1
+      ? { id: "total_debt", label, value, unit: "USD", status: "reported", sources, notes: dedupe(notes) }
+      : { id: "total_debt", label, value, unit: "USD", status: "computed", sources, formula: all.map((p) => p.tag).join(" + "), notes: dedupe(notes) };
+  return { metric, cloChosen, comparative, financeLeasesAdded: fl.length > 0, warnings };
 }
 
+const shortFy = (y: FiscalYear) => y.label.split(" ")[0]!;
+
+/**
+ * Company-level note when the debt lines themselves carry finance leases (KO): finance-reviewer finding 3.
+ * Returns null when no year uses a *CapitalLeaseObligations debt tag.
+ */
+function debtLinesIncludeLeasesNote(years: FiscalYear[], debt: DebtResult[], warnings: string[]): string | null {
+  const cloIdx = debt.map((d, i) => (d.cloChosen ? i : -1)).filter((i) => i >= 0);
+  if (!cloIdx.length) return null;
+  const first = Math.min(...cloIdx);
+  const bits = [`tagged LongTermDebtAndCapitalLeaseObligations${first > 0 ? ` from ${shortFy(years[first]!)}` : ""}`];
+  debt.forEach((d, i) => {
+    if (!d.comparative) return;
+    if (d.comparative.clo === d.comparative.ltd) {
+      bits.push(`the ${shortFy(years[i]!)} comparative is identical under both tags`);
+    } else {
+      bits.push(
+        `the ${shortFy(years[i]!)} comparative differs under the two tags: LongTermDebt $${fmtM(d.comparative.ltd)}M vs $${fmtM(d.comparative.clo)}M; see filing`,
+      );
+      warnings.push(`Total debt ${years[i]!.label}: LongTermDebt and LongTermDebtAndCapitalLeaseObligations differ for the same date; check the filing.`);
+    }
+  });
+  return `The company's debt lines include finance lease obligations (${bits.join("; ")}).`;
+}
+
+// ---------------------------------------------------------------- cash
+
+const INVESTMENT_LABEL: Record<string, string> = {
+  ShortTermInvestments: "short-term investments",
+  MarketableSecuritiesCurrent: "current marketable securities",
+  AvailableForSaleSecuritiesDebtSecuritiesCurrent: "current available-for-sale debt securities",
+  OtherShortTermInvestments: "short-term investments",
+};
+
+function cashMetric(ctx: ResolveContext, year: FiscalYear): Metric {
+  const m = simpleMetric(ctx, "cash", CHAINS.cash, "USD", year, true);
+  if (m.value === null) return m;
+  const inv = pickChain(ctx, CHAINS.st_investments, "USD", year, true);
+  const note = inv
+    ? `Excludes ${INVESTMENT_LABEL[inv.tag] ?? "short-term investments"} of $${fmtM(inv.fact.val)}M (us-gaap:${inv.tag}, ${inv.fact.accn}).`
+    : "No short-term investments or current marketable securities tagged at this date; any shown on the balance sheet are excluded.";
+  return { ...m, notes: [...(m.notes ?? []), note] };
+}
+
+// ---------------------------------------------------------------- EBITDA, growth, margins
+
+const FIN_NM = "n.m.: EBITDA is not meaningful for financial institutions.";
+
 function ebitdaMetric(op: Metric, da: Metric): Metric {
-  const label = ROW_LABELS.ebitda;
+  const label = LABELS.ebitda;
   const sources = [...op.sources, ...da.sources].filter((s): s is SecSource => s.kind === "sec");
   if (op.value === null || da.value === null) {
     return notReported("ebitda", label, "USD", `EBITDA needs both operating income and D&A; ${op.value === null ? "operating income" : "D&A"} is ${NOT_REPORTED}.`, sources);
@@ -195,30 +361,56 @@ function ebitdaMetric(op: Metric, da: Metric): Metric {
   };
 }
 
-function growthMetric(id: Row["id"], base: string, cur: Metric, prior: Metric | undefined, curYear: FiscalYear, priorYear: FiscalYear | undefined): Metric {
-  const label = ROW_LABELS[id];
-  if (!prior || !priorYear) return notReported(id, label, "ratio", `Needs the prior fiscal year, which is ${NOT_REPORTED} in the 10-K data.`);
+/** Consecutive fiscal years: period ends 350–380 days apart (finance-reviewer finding 8). */
+export const consecutive = (prior: FiscalYear, cur: FiscalYear) => {
+  const d = durationDays(prior.end, cur.end);
+  return d >= 350 && d <= 380;
+};
+
+const weeks53Notes = (...ys: FiscalYear[]) => ys.filter((y) => y.weeks53).map((y) => `Not like-for-like: ${y.label} is a 53-week year`);
+
+type GrowthInput = {
+  id: Row["id"];
+  /** Lower-case noun for notes, e.g. "revenue". */
+  noun: string;
+  /** Formula noun, e.g. "Revenue". */
+  base: string;
+  cur: Metric;
+  prior: Metric | undefined;
+  curYear: FiscalYear;
+  priorYear: FiscalYear | undefined;
+  extraNotes?: string[];
+};
+
+function growthMetric(g: GrowthInput): Metric {
+  const { id, noun, base, cur, prior, curYear, priorYear } = g;
+  const label = LABELS[id];
+  if (!prior || !priorYear) return nm(id, label, [`n.m.: needs prior-year ${noun} (no earlier fiscal year in the 10-K data).`]);
   const sources = [...cur.sources, ...prior.sources];
-  if (cur.value === null || prior.value === null) {
-    return notReported(id, label, "ratio", `Needs ${base} for ${curYear.label} and ${priorYear.label}; one is ${NOT_REPORTED}.`, sources as SecSource[]);
-  }
   const formula = `${base} ${curYear.label} / ${base} ${priorYear.label} − 1`;
-  if (prior.value <= 0) {
-    return { id, label, value: null, unit: "ratio", status: "n.m.", sources, formula, notes: ["n.m.: prior-year value is zero or negative."] };
+  if (!consecutive(priorYear, curYear)) {
+    return nm(id, label, [`n.m.: non-consecutive fiscal years (${priorYear.label} to ${curYear.label}).`], sources, formula);
   }
-  return { id, label, value: cur.value / prior.value - 1, unit: "ratio", status: "computed", sources, formula };
+  if (cur.value === null || prior.value === null) {
+    const missing = cur.value === null && prior.value === null ? `${curYear.label} and prior-year ${noun}` : cur.value === null ? `${curYear.label} ${noun}` : `prior-year ${noun}`;
+    const why = [cur, prior].some((m) => m.status === "n.m.") ? "it is n.m." : `it is ${NOT_REPORTED}`;
+    return nm(id, label, [`n.m.: needs ${missing}; ${why}.`], sources);
+  }
+  if (prior.value <= 0) return nm(id, label, ["n.m.: prior-year value is zero or negative."], sources, formula);
+  const notes = dedupe([...weeks53Notes(priorYear, curYear), ...(g.extraNotes ?? [])]);
+  return { id, label, value: cur.value / prior.value - 1, unit: "ratio", status: "computed", sources, formula, ...(notes.length ? { notes } : {}) };
 }
 
-function marginMetric(id: Row["id"], base: string, num: Metric, rev: Metric, year: FiscalYear): Metric {
-  const label = ROW_LABELS[id];
+function marginMetric(id: Row["id"], noun: string, base: string, num: Metric, rev: Metric, year: FiscalYear): Metric {
+  const label = LABELS[id];
   const sources = [...num.sources, ...rev.sources];
   if (num.value === null || rev.value === null) {
-    return notReported(id, label, "ratio", `Needs ${base} and revenue for ${year.label}; one is ${NOT_REPORTED}.`, sources as SecSource[]);
+    const missing = num.value === null && rev.value === null ? `${noun} and revenue` : num.value === null ? noun : "revenue";
+    const why = [num, rev].some((m) => m.status === "n.m.") ? "n.m." : NOT_REPORTED;
+    return nm(id, label, [`n.m.: needs ${year.label} ${missing} (${why}).`], sources);
   }
   const formula = `${base} / Revenue (${year.label})`;
-  if (rev.value <= 0) {
-    return { id, label, value: null, unit: "ratio", status: "n.m.", sources, formula, notes: ["n.m.: revenue is zero or negative."] };
-  }
+  if (rev.value <= 0) return nm(id, label, ["n.m.: revenue is zero or negative."], sources, formula);
   return { id, label, value: num.value / rev.value, unit: "ratio", status: "computed", sources, formula };
 }
 
@@ -250,6 +442,8 @@ export function discoverFiscalYears(ctx: ResolveContext, max: number): FiscalYea
 
 export type ResolveResult = { table: FinancialTable; warnings: string[] };
 
+export const isFinancialSic = (sic: string) => /^(602\d|63\d\d)$/.test(sic);
+
 export function resolveTable(ctx: ResolveContext, sic: string): ResolveResult {
   const warnings: string[] = [];
   // One extra (older) year so the oldest shown year has a growth rate.
@@ -258,28 +452,34 @@ export function resolveTable(ctx: ResolveContext, sic: string): ResolveResult {
   const offset = allYears.length - shown.length;
   if (shown.length < YEARS_SHOWN) warnings.push(`Only ${shown.length} fiscal year(s) of 10-K data are available.`);
 
-  const per = allYears.map((y) => {
+  const debt = allYears.map((y) => totalDebtMetric(ctx, y));
+  const leaseNote = debtLinesIncludeLeasesNote(allYears, debt, warnings);
+  const per = allYears.map((y, i) => {
     const revenue = simpleMetric(ctx, "revenue", CHAINS.revenue, "USD", y, false);
     const operating_income = simpleMetric(ctx, "operating_income", CHAINS.operating_income, "USD", y, false);
     const net_income = simpleMetric(ctx, "net_income", CHAINS.net_income, "USD", y, false);
     const da = daMetric(ctx, y);
     const ebitda = ebitdaMetric(operating_income, da);
+    let total_debt = debt[i]!.metric;
+    if (leaseNote && !debt[i]!.financeLeasesAdded) total_debt = { ...total_debt, notes: dedupe([leaseNote, ...(total_debt.notes ?? [])]) };
     return {
       revenue,
       operating_income,
       net_income,
       da,
       ebitda,
-      cash: simpleMetric(ctx, "cash", CHAINS.cash, "USD", y, true),
-      total_debt: totalDebtMetric(ctx, y),
+      cash: cashMetric(ctx, y),
+      total_debt,
       diluted_shares: simpleMetric(ctx, "diluted_shares", CHAINS.diluted_shares, "shares", y, false),
     };
   });
+  debt.slice(offset).forEach((d) => warnings.push(...d.warnings));
 
-  const isFinancial = /^(602\d|63\d\d)$/.test(sic);
+  const isFinancial = isFinancialSic(sic);
   if (isFinancial) {
     for (const p of per) {
-      p.ebitda = { ...p.ebitda, value: null, status: "n.m.", notes: ["n.m.: EBITDA is not meaningful for financial institutions."] };
+      p.ebitda = { ...p.ebitda, value: null, status: "n.m.", formula: undefined, notes: [FIN_NM] };
+      delete p.ebitda.formula;
     }
   }
 
@@ -287,48 +487,85 @@ export function resolveTable(ctx: ResolveContext, sic: string): ResolveResult {
   per.forEach((p, i) => {
     if (!isFinancial && p.revenue.value !== null && p.revenue.value <= 0) {
       warnings.push(`Revenue for ${allYears[i]!.label} is zero or negative; it is shown as not reported.`);
-      p.revenue = notReported("revenue", ROW_LABELS.revenue, "USD", "Failed sanity check (revenue ≤ 0).");
+      p.revenue = notReported("revenue", LABELS.revenue, "USD", "Failed sanity check (revenue ≤ 0).");
     }
   });
 
+  // D&A method across years (finance-reviewer finding 1): label, page warnings, EBITDA growth notes.
+  const shownDa = per.slice(offset).map((p) => p.da);
+  const computedYears = shown.filter((_, j) => shownDa[j]!.status === "computed");
+  const reportedYears = shown.filter((_, j) => shownDa[j]!.status === "reported");
+  if (computedYears.length) {
+    warnings.push(
+      `D&A is computed for ${computedYears.map((y) => y.label).join(", ")} as us-gaap Depreciation + AmortizationOfIntangibleAssets because the company does not tag a us-gaap D&A total. It does not tie to the cash-flow statement's D&A line and can differ from it by several percent in either direction; EBITDA, EBITDA growth and EBITDA margin inherit the difference.`,
+    );
+  }
+  if (computedYears.length && reportedYears.length) {
+    warnings.push(
+      `The D&A row mixes methods across years: reported (us-gaap D&A total) for ${reportedYears.map((y) => y.label).join(", ")}; computed (Depreciation + AmortizationOfIntangibleAssets) for ${computedYears.map((y) => y.label).join(", ")}. D&A and EBITDA are not like-for-like across the change.`,
+    );
+  }
+  const daMethodNote = (i: number): string[] => {
+    const a = per[i - 1]?.da.status;
+    const b = per[i]!.da.status;
+    if (i === 0 || a === b || (a !== "reported" && a !== "computed") || (b !== "reported" && b !== "computed")) return [];
+    return [`Not like-for-like: D&A is ${a} in ${allYears[i - 1]!.label} and ${b} in ${allYears[i]!.label}`];
+  };
+
   const valueRow = (id: keyof (typeof per)[number], unit: MetricUnit): Row => ({
     id,
-    label: ROW_LABELS[id],
+    label: LABELS[id],
     kind: "value",
     unit,
     cells: per.slice(offset).map((p) => p[id]),
   });
-  const growthRow = (id: Row["id"], key: "revenue" | "operating_income" | "ebitda" | "net_income", base: string): Row => ({
+  const NOUN = { revenue: ["revenue", "Revenue"], operating_income: ["operating income", "Operating income"], ebitda: ["EBITDA", "EBITDA"], net_income: ["net income", "Net income"] } as const;
+  const growthRow = (id: Row["id"], key: keyof typeof NOUN): Row => ({
     id,
-    label: ROW_LABELS[id],
+    label: LABELS[id],
     kind: "growth",
     unit: "ratio",
     cells: shown.map((y, j) => {
       const i = j + offset;
-      return growthMetric(id, base, per[i]![key], i > 0 ? per[i - 1]![key] : undefined, y, i > 0 ? allYears[i - 1] : undefined);
+      if (isFinancial && key === "ebitda") return nm(id, LABELS[id], [FIN_NM]);
+      return growthMetric({
+        id,
+        noun: NOUN[key][0],
+        base: NOUN[key][1],
+        cur: per[i]![key],
+        prior: i > 0 ? per[i - 1]![key] : undefined,
+        curYear: y,
+        priorYear: i > 0 ? allYears[i - 1] : undefined,
+        ...(key === "ebitda" ? { extraNotes: daMethodNote(i) } : {}),
+      });
     }),
   });
-  const marginRow = (id: Row["id"], key: "operating_income" | "ebitda" | "net_income", base: string): Row => ({
+  const marginRow = (id: Row["id"], key: "operating_income" | "ebitda" | "net_income"): Row => ({
     id,
-    label: ROW_LABELS[id],
+    label: LABELS[id],
     kind: "margin",
     unit: "ratio",
-    cells: shown.map((y, j) => marginMetric(id, base, per[j + offset]![key], per[j + offset]!.revenue, y)),
+    cells: shown.map((y, j) =>
+      isFinancial && key === "ebitda" ? nm(id, LABELS[id], [FIN_NM]) : marginMetric(id, NOUN[key][0], NOUN[key][1], per[j + offset]![key], per[j + offset]!.revenue, y),
+    ),
   });
+
+  const daRow = valueRow("da", "USD");
+  if (computedYears.length) daRow.label = DA_COMPUTED_LABEL;
 
   const rows: Row[] = [
     valueRow("revenue", "USD"),
-    growthRow("revenue_growth", "revenue", "Revenue"),
+    growthRow("revenue_growth", "revenue"),
     valueRow("operating_income", "USD"),
-    growthRow("operating_income_growth", "operating_income", "Operating income"),
-    marginRow("operating_margin", "operating_income", "Operating income"),
-    valueRow("da", "USD"),
+    growthRow("operating_income_growth", "operating_income"),
+    marginRow("operating_margin", "operating_income"),
+    daRow,
     valueRow("ebitda", "USD"),
-    growthRow("ebitda_growth", "ebitda", "EBITDA"),
-    marginRow("ebitda_margin", "ebitda", "EBITDA"),
+    growthRow("ebitda_growth", "ebitda"),
+    marginRow("ebitda_margin", "ebitda"),
     valueRow("net_income", "USD"),
-    growthRow("net_income_growth", "net_income", "Net income"),
-    marginRow("net_margin", "net_income", "Net income"),
+    growthRow("net_income_growth", "net_income"),
+    marginRow("net_margin", "net_income"),
     valueRow("cash", "USD"),
     valueRow("total_debt", "USD"),
     valueRow("diluted_shares", "shares"),

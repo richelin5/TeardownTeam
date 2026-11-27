@@ -16,7 +16,8 @@ export function latestFiling(sub: Submissions, cik10: string, form: "10-K" | "10
         accn,
         filed: r.filingDate[i]!,
         reportDate: r.reportDate[i] ?? "",
-        url: filingUrl(cik10, accn, r.primaryDocument[i]),
+        // Malformed accn -> no URL (fails closed, security L3).
+        url: filingUrl(cik10, accn, r.primaryDocument[i]) ?? "",
       };
     }
   }
