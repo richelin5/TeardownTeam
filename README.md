@@ -1,20 +1,65 @@
 # Company Teardown
 
-Type a US-listed ticker and get a one-page company profile built only from free official data (SEC EDGAR and FRED), **with a source on every number**:
+**Type a US public company's ticker. Get a one-page, banker-style profile built only from free public data, with a source on every number.**
 
-- Company facts: name, ticker, CIK, industry (SIC code and description), fiscal year end, links to the latest 10-K and 10-Q.
-- Five fiscal years of revenue, operating income, net income, D&A, **EBITDA (computed: operating income + D&A)**, cash, total debt and diluted shares, with growth rates and margins, in a table and two charts.
-- A macro strip with the 10-Year Treasury yield (FRED `DGS10`) and the fed funds rate (FRED `FEDFUNDS`), each with its observation date.
-- Hover or focus any number for its form, filing date, accession number and XBRL tag. Every number is also listed in the sources panel. Missing values show "not reported", never a guess.
-- No AI calls anywhere.
+**Live demo:** _coming soon. The link goes here after the first Netlify deploy._ · [Send feedback](https://github.com/richelin5/TeardownTeam/issues/new?template=feedback.yml) · Built by [Richelin Aristilde](https://www.linkedin.com/in/richelin-aristilde)
 
-Stack (ADR [0001](docs/decisions/0001-v1-stack-and-architecture.md)): static HTML + vanilla TypeScript built with Vite, inline-SVG charts, one Netlify Function (`netlify/functions/teardown.mts`), Vitest. **Zero runtime dependencies.**
+![Company Teardown profile for Apple (AAPL): five fiscal years of financials, each number sourced to its 10-K](docs/images/aapl-profile.png)
 
-```
-Browser ──GET /api/teardown?ticker=AAPL──► Netlify CDN (durable, 1 h + 24 h SWR)
-                                              └─► Function: SEC submissions + companyfacts, FRED DGS10/FEDFUNDS
-                                                   → resolver (src/data) → Profile JSON (src/contracts/profile.ts)
-```
+## What it does
+- **Search any US filer by ticker.** It shows the company name, industry (SIC), fiscal year end, and links to the latest 10-K and 10-Q.
+- **Five fiscal years of core financials:**
+  - Revenue, operating income, net income and D&A.
+  - EBITDA (labeled *computed: operating income + D&A*).
+  - Cash, total debt (incl. finance leases) and diluted shares.
+  - Growth rates and margins, a table and two charts.
+- **Rates context from FRED:** the 10-year Treasury yield and the fed funds rate, each with its date.
+- **A source on every number.** Hover, tap or focus any figure to see the form, filing date, XBRL tag and accession number. Press Enter to jump to the filing link. Computed figures say so and show their formula.
+- **No guessing.** If a company doesn't report a value in standard XBRL, the page says **"not reported"**. Ratios that exist but mean nothing (e.g. growth from a negative base) say **"n.m."**
+- **Prints on one landscape page**, with lettered source endnotes, like a pitch-book tear sheet.
+- **Free, official data only:** SEC EDGAR and FRED. No AI is used to produce any number.
+
+## How it checks its numbers
+1. **Straight from the filings.** Figures come from the SEC's XBRL data for each company's own 10-K filings. The app picks the right fact for each fiscal year by period dates, not by labels. That matters, because the SEC tags Apple's FY2017 revenue with `fy: 2019`.
+2. **Tied out against the actual 10-Ks.** An independent tie-out compared every displayed value with the companies' real 10-K financial statements. It also checked every cited source (tag, accession number, period, value) against the raw SEC data:
+
+| Company | Fiscal year end | Checks passed |
+|---|---|---|
+| Apple (AAPL) | September (52/53-week) | 94 / 94 |
+| Microsoft (MSFT) | June | 99 / 99 |
+| Coca-Cola (KO) | December | 94 / 94 |
+
+3. **Honest where the data is messy.** Microsoft reports D&A only in a company-specific XBRL tag that the SEC's standard data doesn't include. The page therefore shows a clearly labeled *computed* D&A (depreciation + amortization of intangibles) and warns that it doesn't tie to the cash-flow line (it differs by +1.2% to −4.9% by year).
+4. **Banker definitions, written down.** Every metric's definition, label and edge-case rule is in [docs/finance/definitions-v1.md](docs/finance/definitions-v1.md). Examples: total debt includes finance leases, EBITDA is unadjusted, and cash excludes short-term investments (quantified in a note).
+5. **Automated tests:** 123 tests run in CI on every push, including golden tie-out tests built from real SEC responses.
+
+## What's coming in v2
+- Trailing-twelve-month (LTM) and latest-quarter columns from the 10-Q
+- Market cap, enterprise value and valuation multiples, once a share-price source is chosen
+- Reading company-specific XBRL lines (like Microsoft's D&A) directly from the filing so they tie exactly
+- A wider tie-out set: Walmart (January FYE), JPMorgan (bank), Berkshire Hathaway (two share classes), a REIT, a loss-maker and a restated filer
+- Sector metrics for banks, insurers and REITs
+- A shared cache across server instances to stay well inside SEC's fair-access limits under heavy traffic
+- Ticker autocomplete, peer comparison and CSV export with sources
+
+The full backlog is in [docs/project/STATUS.md](docs/project/STATUS.md).
+
+## Built with a team of AI agents I designed and directed
+I built Company Teardown with [Claude Code](https://code.claude.com/docs) using a team of 12 AI agents that I designed: a product manager, UX designer, software architect, front-end and back-end developers, a financial data engineer, a finance domain reviewer, a QA tester, a security reviewer, DevOps, an orchestrator that runs the team, and a meta agent that can add new agents. Each one has its own role, model, personality, shared skills and a knowledge folder. They're all in this repo ([`.claude/agents/`](.claude/agents/), [`.claude/skills/`](.claude/skills/), [CLAUDE.md](CLAUDE.md)).
+
+How it actually went, honestly:
+- **I set the direction.** I wrote the v1 scope, the rules (a source on every number, "not reported" instead of guessing, nothing secret in the browser) and the gates. Then I reviewed the results and made the calls.
+- **The first build wasn't independently reviewed.** In the first session the orchestrator couldn't start the other agents, so it did every role itself. It correctly refused to approve its own work.
+- **The real reviewers found real problems.** Run independently, they flagged:
+  - a Microsoft D&A figure that didn't tie to the 10-K;
+  - total debt that treated finance leases inconsistently across companies;
+  - a printout that ran 5–6 pages;
+  - tooltips that didn't work on touch screens;
+  - no global cap protecting SEC's rate limit.
+  The developers fixed them over three review rounds, until finance, QA, security and UX all signed off. Every report is in [`docs/`](docs/) and [`tests/tieout/`](tests/tieout/).
+- **The agents did the typing; the accountability is mine.** If a number is wrong, please [tell me](https://github.com/richelin5/TeardownTeam/issues/new?template=feedback.yml).
+
+The research behind the app (SEC EDGAR APIs, XBRL pitfalls, FRED, what a banker expects on a one-pager, and Netlify) is in [docs/](docs/README.md).
 
 ## Local development
 
@@ -57,14 +102,15 @@ Copy `.env.example` to `.env`, fill in both variables, then run `npm run dev` (t
    Optionally remove `FRED_API_KEY` from the *Deploy Previews* and *Branch deploys* contexts (use a separate key or let previews run without it).
    **Never set `TEARDOWN_FIXTURES` on Netlify.**
    **Fork PRs (public repo):** in *Site configuration → Build & deploy → Environment variables → Sensitive variable policy*, choose **Require approval** (or **Deploy without sensitive variables**) so that a pull request from a fork cannot read your secret values in a Deploy Preview.
-6. **Deploy:** click *Deploy site* (or push to `main`). Pull requests get Deploy Previews automatically.
-7. **Verify:**
+6. **Link previews (optional):** the Open Graph/Twitter tags use Netlify's build-time `URL` (your site's main address) to make the preview-image URL absolute, as LinkedIn requires. If you use a custom domain that isn't the site's primary domain, set `SITE_URL=https://your.domain` (Builds scope). Regenerate the image with `npm run build && node scripts/preview-fixtures.mjs 4291` and then `node scripts/og-image.mjs`.
+7. **Deploy:** click *Deploy site* (or push to `main`). Pull requests get Deploy Previews automatically.
+8. **Verify:**
    - `https://<site>.netlify.app/?ticker=AAPL` renders the profile.
    - `curl -sI "https://<site>.netlify.app/api/teardown?ticker=AAPL"` shows `netlify-cdn-cache-control: public, durable, s-maxage=3600, stale-while-revalidate=86400`. Run it twice: the second response's `Cache-Status` header should show a hit.
    - `curl -s "https://<site>.netlify.app/api/teardown?ticker=ZZZZZZ"` returns 404 and `?ticker=bad$$` returns 400.
    - The response headers of `/` include `content-security-policy`.
    - A 500 "Server is not configured." means one of the two env vars is missing; set it and redeploy.
-8. **Purge one ticker's cache** if needed: every deploy purges the CDN. Responses carry `Netlify-Cache-Tag: ticker-<TICKER>` for targeted purges.
+9. **Purge one ticker's cache** if needed: every deploy purges the CDN. Responses carry `Netlify-Cache-Tag: ticker-<TICKER>` for targeted purges.
 
 ## Caching and limits
 - CDN: success `public, durable, s-maxage=3600, stale-while-revalidate=86400`, keyed by `Netlify-Vary: query=ticker`. Errors: `s-maxage=60`.
@@ -72,7 +118,7 @@ Copy `.env.example` to `.env`, fill in both variables, then run `npm run dev` (t
 - SEC: ≤ 5 concurrent requests per instance, with retries on 429/503 (3 tries, backoff). FRED: 2 requests per cache miss.
 
 ## Rate limiting and fair access
-- The function applies a per-IP, code-based rate limit (added in `src/api/`), which limits a single client's cache-miss traffic.
+- The function applies a per-IP, code-based rate limit (30 requests per 60 s, in `netlify/functions/teardown.mts`), which limits a single client's cache-miss traffic.
 - There is no global request cap on non-Enterprise Netlify plans, so this limit is not a hard ceiling.
 - SEC allows at most 10 requests per second in total; FRED at most 120 per minute.
 - The main protection is the CDN durable cache (1 h fresh, 24 h stale-while-revalidate): repeat lookups of a ticker never reach the function or the upstreams.
@@ -92,3 +138,6 @@ See the v2 backlog and open issues in [docs/project/STATUS.md](docs/project/STAT
 | `fixtures/` | real captured SEC/FRED responses and 10-K statements |
 
 The team that builds this repository is described in [CLAUDE.md](CLAUDE.md).
+
+---
+Data: SEC EDGAR and FRED (Federal Reserve Bank of St. Louis). Not investment advice.

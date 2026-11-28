@@ -4,7 +4,22 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Company Teardown</title>
-    <meta name="description" content="Five fiscal years of core financials from SEC EDGAR, with a source on every number." />
+    <meta name="description" content="Type a US ticker, get a banker-style one-page profile built only from SEC EDGAR and FRED, with a source on every number." />
+    <link rel="canonical" href="%SITE_URL%/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Company Teardown" />
+    <meta property="og:title" content="Company Teardown: a sourced one-page company profile" />
+    <meta property="og:description" content="Type a US ticker, get five fiscal years of financials from the company's own SEC filings, with a source on every number. Free public data only." />
+    <meta property="og:url" content="%SITE_URL%/" />
+    <meta property="og:image" content="%SITE_URL%/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Company Teardown profile for Apple (AAPL): five fiscal years of revenue, operating income, EBITDA and more, each sourced to its 10-K." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Company Teardown: a sourced one-page company profile" />
+    <meta name="twitter:description" content="Five fiscal years of financials from SEC filings, with a source on every number." />
+    <meta name="twitter:image" content="%SITE_URL%/og-image.png" />
+    <meta name="twitter:image:alt" content="Company Teardown profile for Apple (AAPL) built from its 10-K filings." />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
@@ -16,15 +31,20 @@
         <input id="ticker" name="ticker" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="10" placeholder="Ticker, e.g. AAPL" required />
         <button type="submit">Look up</button>
       </form>
-      <nav><a href="/resources.html">Resources</a></nav>
+      <p class="examples" id="examples">Try:
+        <a href="/?ticker=AAPL" data-ticker="AAPL">AAPL</a>
+        <a href="/?ticker=KO" data-ticker="KO">KO</a>
+        <a href="/?ticker=MSFT" data-ticker="MSFT">MSFT</a>
+      </p>
+      <nav><a href="/resources.html">Resources</a><a href="https://github.com/richelin5/TeardownTeam/issues/new?template=feedback.yml" rel="noopener noreferrer">Send feedback</a></nav>
     </header>
     <p id="status" class="visually-hidden" aria-live="polite"></p>
     <main id="app"></main>
     <div id="tip" role="tooltip" hidden></div>
     <footer class="site-footer">
+      <span>Built by <a href="https://www.linkedin.com/in/richelin-aristilde" rel="noopener noreferrer">Richelin Aristilde</a> · Data: SEC EDGAR and FRED · Not investment advice</span>
       <a href="/resources.html">Resources</a>
-      <span>Data: SEC EDGAR and FRED, Federal Reserve Bank of St. Louis</span>
-      <span>No AI is used · Not investment advice</span>
+      <a href="https://github.com/richelin5/TeardownTeam/issues/new?template=feedback.yml" rel="noopener noreferrer">Send feedback</a>
     </footer>
     <script type="module" src="/src/ui/main.ts"></script>
   </body>

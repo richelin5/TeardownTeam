@@ -14,7 +14,7 @@ const globalBlock = toml.split('for = "/*"')[1]?.split("[[headers]]")[0] ?? "";
 const headers = Object.fromEntries([...globalBlock.matchAll(/^\s*([A-Za-z-]+)\s*=\s*"(.*)"\s*$/gm)].map((m) => [m[1], m[2]]));
 delete headers["Strict-Transport-Security"]; // http://localhost
 headers["Content-Security-Policy"] = (headers["Content-Security-Policy"] ?? "").replace("; upgrade-insecure-requests", "");
-const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".json": "application/json" };
+const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".json": "application/json", ".png": "image/png" };
 
 const vite = await createVite({ root: process.cwd(), server: { middlewareMode: true }, appType: "custom", logLevel: "error", optimizeDeps: { noDiscovery: true, include: [] } });
 const { handleRequest, defaultDeps } = await vite.ssrLoadModule("/src/api/handler.ts");

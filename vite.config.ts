@@ -30,8 +30,22 @@ function devApi(): Plugin {
   };
 }
 
+/**
+ * Build-time site URL for Open Graph/Twitter tags (crawlers need absolute URLs).
+ * Netlify sets URL (the site's main address) during builds; SITE_URL overrides it.
+ * Only a plain https origin is accepted; anything else falls back to "" (relative URLs).
+ */
+function siteUrl(): Plugin {
+  const raw = (process.env.SITE_URL ?? process.env.URL ?? "").trim().replace(/\/+$/, "");
+  const url = /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(raw) ? raw : "";
+  return {
+    name: "teardown-site-url",
+    transformIndexHtml: (html: string) => html.replaceAll("%SITE_URL%", url),
+  };
+}
+
 export default defineConfig({
-  plugins: [devApi()],
+  plugins: [devApi(), siteUrl()],
   publicDir: "public",
   build: {
     outDir: "dist",
