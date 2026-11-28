@@ -1,0 +1,32 @@
+name: Feedback
+description: Tell me what worked, what didn't, or a number that looks wrong.
+title: "[Feedback] "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying Company Teardown! Please don't include personal or confidential information. This is a public repository.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of feedback?
+      options:
+        - A number looks wrong or doesn't match the filing
+        - Bug or something didn't load
+        - Idea or feature request
+        - General feedback
+    validations:
+      required: true
+  - type: input
+    id: ticker
+    attributes:
+      label: Ticker (if relevant)
+      placeholder: e.g. AAPL
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What did you expect, and what did you see? For a number, include the metric, the fiscal year and, if you can, the filing line you compared it with.
+    validations:
+      required: true

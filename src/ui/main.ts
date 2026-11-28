@@ -321,15 +321,9 @@ function message(kind: "info" | "error", text: string, extra?: Node) {
 
 function intro() {
   clear(app);
-  const ex = el("p", {}, "Try: ");
-  ["AAPL", "MSFT", "KO"].forEach((t, i) => {
-    if (i) ex.append(" · ");
-    ex.append(el("a", { href: `/?ticker=${t}` }, t));
-  });
   app.append(el("section", { class: "intro" },
     el("h1", {}, "Company Teardown"),
-    el("p", {}, "Type a US-listed ticker to see five fiscal years of core financials from the company's own 10-K XBRL data, with the source of every number. Rates come from FRED. No AI is used."),
-    ex));
+    el("p", {}, "Type a US-listed ticker, or pick an example under the search box, to see five fiscal years of core financials from the company's own 10-K XBRL data, with the source of every number. Rates come from FRED. No AI is used.")));
 }
 
 const BAD_TICKER = "That doesn't look like a ticker. Use 1\u201310 letters, digits or '-'.";
@@ -371,6 +365,14 @@ function lookup(raw: string, push: boolean) {
   if (push) history.pushState(null, "", `/?ticker=${encodeURIComponent(t)}`);
   void load(t);
 }
+
+// Example tickers under the search box: one click, no page reload (plain links still work without JS).
+document.getElementById("examples")?.addEventListener("click", (e) => {
+  const a = (e.target as Element | null)?.closest("a[data-ticker]");
+  if (!a) return;
+  e.preventDefault();
+  lookup(a.getAttribute("data-ticker") ?? "", true);
+});
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
