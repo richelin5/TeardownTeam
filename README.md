@@ -2,7 +2,7 @@
 
 **Type a US public company's ticker. Get a one-page, banker-style profile built only from free public data, with a source on every number.**
 
-**Live demo:** _coming soon. The link goes here after the first Netlify deploy._ · [Send feedback](https://github.com/richelin5/TeardownTeam/issues/new?template=feedback.yml) · Built by [Richelin Aristilde](https://www.linkedin.com/in/richelin-aristilde)
+**Live demo:** [richelin-teardown.netlify.app](https://richelin-teardown.netlify.app) · [Send feedback](https://github.com/richelin5/TeardownTeam/issues/new?template=feedback.yml) · Built by [Richelin Aristilde](https://www.linkedin.com/in/richelin-aristilde)
 
 ![Company Teardown profile for Apple (AAPL): five fiscal years of financials, each number sourced to its 10-K](docs/images/aapl-profile.png)
 
